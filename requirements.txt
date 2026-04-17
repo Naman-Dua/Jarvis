@@ -1,10 +1,5 @@
 ollama
 faster-whisper
-sounddevice
-soundfile
-numpy
-pyttsx3
-google-genai
-requests
-beautifulsoup4
 PyQt6
+flask
+flask-socketio
