@@ -6,8 +6,11 @@ import ollama
 class AuraBrain:
     def __init__(self):
         init_db()
+        self.model_name = "llama3.1:8b"
         
-        self.model_name = "llama3.1:8b" # Swapped to Llama 8B which is much faster
+        # This is the key: A list to hold the current conversation session
+        self.conversation_history = [] 
+        self.max_history = 100  # Keep the last 10 messages to avoid slowing down
 
         self.system_instruction = (
             "You are Aura, a highly capable, polite, and beautiful AI assistant. "
@@ -16,17 +19,15 @@ class AuraBrain:
         )
 
     def learn(self, text):
-        """Stores a memory for future context."""
         store_info("memory", text)
 
     def generate_reply(self, user_input):
         text = user_input.lower()
 
-        # Handle simple time requests immediately without API wait
         if "time" in text and ("what" in text or "current" in text):
             return f"The current time is {datetime.now().strftime('%H:%M')}."
 
-        # Search the database for any related context based on keywords in the prompt
+        # --- CONTEXT RETRIEVAL (Long term memory) ---
         words = text.split()
         context_items = []
         for word in words:
@@ -35,23 +36,38 @@ class AuraBrain:
                 if results:
                     context_items.extend(results)
         
-        # Deduplicate context if any was found
-        context_items = list(set(context_items))
+        context_string = ", ".join(list(set(context_items))[:4])
+        
+        # Build the specific prompt for this turn, including long-term facts
+        full_user_prompt = user_input
+        if context_string:
+            full_user_prompt = f"Context facts: {context_string}\n\nUser says: {user_input}"
 
-        # Build the prompt
-        prompt = user_input
-        if context_items:
-            prompt = f"Knowledge base/Context facts: {', '.join(context_items[:4])}\n\nUser says: {user_input}"
-        else:
-            prompt = f"User says: {user_input}"
+        # --- CONVERSATION HISTORY (Short term memory) ---
+        # 1. Add the new user message to the history
+        self.conversation_history.append({'role': 'user', 'content': full_user_prompt})
+
+        # 2. Keep the history from growing too large (Sliding Window)
+        if len(self.conversation_history) > self.max_history:
+            self.conversation_history = self.conversation_history[-self.max_history:]
 
         try:
-            # Use local Ollama model
-            response = ollama.generate(
+            # Use ollama.chat instead of ollama.generate
+            response = ollama.chat(
                 model=self.model_name,
-                prompt=f"{self.system_instruction}\n\n{prompt}"
+                messages=[
+                    {'role': 'system', 'content': self.system_instruction},
+                    *self.conversation_history # Unpack the entire history here
+                ]
             )
-            return response['response'].strip()
+            
+            reply = response['message']['content'].strip()
+            
+            # 3. Add Aura's own reply to history so she remembers what she said
+            self.conversation_history.append({'role': 'assistant', 'content': reply})
+            
+            return reply
+            
         except Exception as e:
             print(f"[Aura Brain Error]: {e}")
-            return "I am having trouble connecting to my local Ollama server, sir. Please make sure Ollama is running."
+            return "I am having trouble connecting to my local Ollama server, sir."

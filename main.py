@@ -1,6 +1,7 @@
 import threading
 import sys
 import os
+import re
 import time
 import traceback
 import winsound
@@ -17,14 +18,16 @@ from ears import extract_wake_command, listen
 brain = AuraBrain()
 reminder_manager = ReminderManager()
 sleep_mode = threading.Event()
-pending_alerts = []
-pending_alerts_lock = threading.Lock()
 wake_notice_pending = threading.Event()
+active_alert_ids = set()
+active_alerts_lock = threading.Lock()
 ENABLE_WAKE_WORD = os.getenv("AURA_ENABLE_WAKE_WORD", "0").lower() in {"1", "true", "yes", "on"}
 WAKE_STATUS = "LISTENING FOR WAKE WORD"
 COMMAND_STATUS = "LISTENING FOR COMMAND"
 DEFAULT_LISTENING_STATUS = WAKE_STATUS if ENABLE_WAKE_WORD else "LISTENING..."
 SLEEPING_STATUS = "SLEEPING..."
+ALERT_REPEAT_INTERVAL = 10
+MAX_ALERT_REPEATS = 6
 SHUTDOWN_COMMANDS = {
     "shutdown",
     "power down",
@@ -42,29 +45,70 @@ SLEEP_COMMANDS = {
     "stay quiet",
     "stop talking",
     "don't talk",
+    "dont talk",
     "do not talk",
     "stop listening",
     "mute yourself",
 }
+DISMISS_ALERT_COMMANDS = {
+    "dismiss reminder",
+    "stop reminder",
+    "stop the reminder",
+    "dismiss the reminder",
+    "dismiss timer",
+    "stop timer",
+    "stop the timer",
+    "dismiss alert",
+    "stop alert",
+    "got it",
+    "okay thanks",
+    "okay thank you",
+}
+
+
+def normalize_voice_command(cmd):
+    normalized = re.sub(r"[^a-z0-9'\s]+", " ", str(cmd).lower())
+    normalized = re.sub(r"\b(aura|please)\b", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def command_matches(normalized, phrases):
+    for phrase in phrases:
+        if normalized == phrase or f" {phrase} " in f" {normalized} ":
+            return True
+    return False
 
 
 def is_sleep_request(cmd):
-    normalized = " ".join(cmd.strip().split())
-    return normalized in SLEEP_COMMANDS
+    normalized = normalize_voice_command(cmd)
+    return command_matches(normalized, SLEEP_COMMANDS)
 
 
-def queue_pending_alert(message):
-    with pending_alerts_lock:
-        pending_alerts.append(message)
+def is_dismiss_alert_request(cmd):
+    normalized = normalize_voice_command(cmd)
+    return command_matches(normalized, DISMISS_ALERT_COMMANDS)
 
 
-def pop_pending_alerts():
-    with pending_alerts_lock:
-        queued = list(pending_alerts)
-        pending_alerts.clear()
-        return queued
+def register_active_alert(item_id):
+    with active_alerts_lock:
+        active_alert_ids.add(item_id)
 
 
+def clear_active_alert(item_id):
+    with active_alerts_lock:
+        active_alert_ids.discard(item_id)
+
+
+def is_alert_active(item_id):
+    with active_alerts_lock:
+        return item_id in active_alert_ids
+
+
+def dismiss_all_alerts():
+    with active_alerts_lock:
+        count = len(active_alert_ids)
+        active_alert_ids.clear()
+        return count
 def handle_wake_transition(ui):
     if not wake_notice_pending.is_set():
         return
@@ -73,13 +117,6 @@ def handle_wake_transition(ui):
     ui.log_signal.emit("SYSTEM", "Aura is awake again.")
     ui.status_signal.emit("SPEAKING...")
     speak("I'm awake.")
-
-    queued_alerts = pop_pending_alerts()
-    for message in queued_alerts:
-        wake_message = f"While you were away, {message}"
-        ui.log_signal.emit("REMINDER", wake_message)
-        speak(wake_message)
-
     ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
 
 
@@ -132,12 +169,6 @@ def reminder_loop(ui):
         try:
             due_items = reminder_manager.pop_due()
             for item in due_items:
-                if sleep_mode.is_set():
-                    queued_message = item.trigger_message()
-                    ui.log_signal.emit("REMINDER", f"Queued while sleeping: {queued_message}")
-                    queue_pending_alert(queued_message)
-                    continue
-
                 alert_thread = threading.Thread(
                     target=deliver_reminder_alert,
                     args=(ui, item),
@@ -159,20 +190,36 @@ def play_alert_tone():
 
 def deliver_reminder_alert(ui, item):
     base_message = item.trigger_message()
-    follow_up_messages = [
-        base_message,
-        f"Follow-up: {base_message}",
-        f"Final reminder: {base_message}",
-    ]
+    was_sleeping = sleep_mode.is_set()
+    register_active_alert(item.id)
 
-    for index, message in enumerate(follow_up_messages):
-        ui.log_signal.emit("REMINDER", message)
-        ui.status_signal.emit("SPEAKING...")
-        play_alert_tone()
-        speak(message)
-        ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
-        if index < len(follow_up_messages) - 1:
-            time.sleep(8)
+    try:
+        for index in range(MAX_ALERT_REPEATS):
+            if not is_alert_active(item.id):
+                break
+
+            if index == 0:
+                message = base_message
+            elif index == MAX_ALERT_REPEATS - 1:
+                message = f"Final reminder: {base_message}"
+            else:
+                message = f"Follow-up reminder: {base_message}"
+
+            if was_sleeping and index == 0:
+                ui.log_signal.emit("SYSTEM", "Reminder is interrupting sleep mode.")
+            elif index > 0:
+                ui.log_signal.emit("SYSTEM", f"Reminder follow-up {index + 1} of {MAX_ALERT_REPEATS}.")
+
+            ui.log_signal.emit("REMINDER", message)
+            ui.status_signal.emit("SPEAKING...")
+            play_alert_tone()
+            speak(message)
+            ui.status_signal.emit(SLEEPING_STATUS if sleep_mode.is_set() else DEFAULT_LISTENING_STATUS)
+
+            if index < MAX_ALERT_REPEATS - 1 and is_alert_active(item.id):
+                time.sleep(ALERT_REPEAT_INTERVAL)
+    finally:
+        clear_active_alert(item.id)
 
 def aura_logic(ui):
     ui.status_signal.emit("SYSTEM ONLINE")
@@ -200,6 +247,19 @@ def aura_logic(ui):
                 print("\nAURA: Shutting down immediately.")
                 QCoreApplication.quit()
                 os._exit(0) # Immediate OS-level process kill
+
+            if is_dismiss_alert_request(cmd):
+                dismissed = dismiss_all_alerts()
+                dismiss_reply = (
+                    f"Stopped {dismissed} active reminder alert{'s' if dismissed != 1 else ''}."
+                    if dismissed
+                    else "There is no active reminder alert right now."
+                )
+                ui.log_signal.emit("AURA", dismiss_reply)
+                ui.status_signal.emit("SPEAKING...")
+                speak(dismiss_reply)
+                ui.status_signal.emit(SLEEPING_STATUS if sleep_mode.is_set() else DEFAULT_LISTENING_STATUS)
+                continue
 
             if is_sleep_request(cmd):
                 sleep_mode.set()
