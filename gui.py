@@ -1,307 +1,224 @@
 import sys
+import os
 import math
 import random
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QTextEdit, QFrame)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QDateTime, QRectF
-from PyQt6.QtGui import QPainter, QColor, QPen, QRadialGradient, QLinearGradient, QFont, QPainterPath
-
-from monitor import get_system_vitals
-
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
+from PyQt6.QtGui import QPainter, QColor, QFont, QPainterPath, QRadialGradient, QPen
 
 # ==============================================================================
-# CUSTOM RENDERED AESTHETIC WIDGETS
+# 3D PARTICLE SPHERE ENGINE (V2 POLISHED)
 # ==============================================================================
 
-class GlassPanel(QFrame):
-    """ Custom panel drawing a highly aesthetic, semi-transparent frosted glass backing """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        rect = QRectF(self.rect().adjusted(2, 2, -2, -2))
-        path = QPainterPath()
-        path.addRoundedRect(rect, 20, 20)
-        
-        # Deep space / neon glassmorphism gradient
-        grad = QLinearGradient(0, 0, self.width(), self.height())
-        grad.setColorAt(0, QColor(36, 20, 68, 180))    # Deep purple
-        grad.setColorAt(1, QColor(10, 14, 23, 200))    # Void black
-        p.fillPath(path, grad)
-        
-        # Soft glowing bright cyan/magenta edge
-        border_grad = QLinearGradient(0, 0, self.width(), self.height())
-        border_grad.setColorAt(0, QColor(0, 210, 255, 80))
-        border_grad.setColorAt(1, QColor(200, 50, 255, 40))
-        pen = QPen(border_grad, 2)
-        p.setPen(pen)
-        p.drawPath(path)
+class ParticlePoint:
+    def __init__(self, x, y, z):
+        self.base_x = x
+        self.base_y = y
+        self.base_z = z
 
-
-class CircularGauge(QWidget):
-    """ A sleek, sci-fi holographic circular read-out gauge """
-    def __init__(self, title, color, parent=None):
-        super().__init__(parent)
-        self.title = title
-        self.color = color
-        self.value = 0
-        self.setMinimumSize(140, 140)
-        
-    def setValue(self, val):
-        self.value = val
-        self.update()
-        
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        rect = self.rect().adjusted(15, 15, -15, -15)
-        
-        # Faint background tracking ring
-        pen = QPen(QColor(255, 255, 255, 15))
-        pen.setWidth(6)
-        p.setPen(pen)
-        p.drawArc(rect, 0, 360 * 16)
-        
-        # Active data arc representing metrics
-        pen.setColor(self.color)
-        pen.setWidth(8)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        span = int((self.value / 100.0) * -360 * 16) # draw backwards for aesthetic
-        p.drawArc(rect, 90 * 16, span)
-        
-        # Center Number Value
-        p.setPen(QColor(255, 255, 255, 240))
-        font = QFont("Segoe UI", 18, QFont.Weight.Bold)
-        p.setFont(font)
-        p.drawText(self.rect().adjusted(0, -10, 0, 0), Qt.AlignmentFlag.AlignCenter, f"{self.value}%")
-        
-        # Bottom Title
-        p.setPen(self.color)
-        font = QFont("Consolas", 10, QFont.Weight.Bold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3)
-        p.setFont(font)
-        p.drawText(self.rect().adjusted(0, 40, 0, 0), Qt.AlignmentFlag.AlignCenter, self.title)
-
-
-class AuraOrbWidget(QWidget):
-    """ The breathing orb core, refined for peak visual smoothness """
+class AuraSphereWidget(QWidget):
+    """ Renders thousands of dots on a 3D sphere with an energy core and bounding rings. """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(450, 450)
         self.phase = 0.0
+        self.rot_x = 0.0
+        self.rot_y = 0.0
+        self.state = "IDLE" 
+        
+        # Generate 1200 particles using the Golden Ratio (Fibonacci sphere) 
         self.particles = []
-        for _ in range(70):
-            self.particles.append([
-                random.uniform(0, 360), random.uniform(0.3, 1.0), 
-                random.uniform(60, 180), random.uniform(1.5, 4),
-                random.choice([QColor(0, 210, 255, 200), QColor(200, 50, 255, 150), QColor(255, 255, 255, 150)])
-            ])
+        num_particles = 1200 
+        phi = math.pi * (3.0 - math.sqrt(5.0))
+
+        for i in range(num_particles):
+            y = 1 - (i / float(num_particles - 1)) * 2 
+            r = math.sqrt(1 - y * y)  
+            theta = phi * i  
+
+            x = math.cos(theta) * r
+            z = math.sin(theta) * r
+            self.particles.append(ParticlePoint(x, y, z))
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate)
-        self.timer.start(16)
+        self.timer.start(16) 
 
     def animate(self):
-        self.phase += 0.03
-        for p in self.particles: p[0] = (p[0] + p[1]) % 360
+        self.phase += 0.1
+        # Slowly spin the 3D sphere
+        if self.state == "PROCESSING":
+            self.rot_y -= 0.08 
+            self.rot_x += 0.04
+        elif self.state == "SPEAKING":
+            self.rot_y -= 0.04 
+            self.rot_x += 0.02
+        else:
+            self.rot_y -= 0.01
+            self.rot_x += 0.005
+            
         self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        cx, cy = self.width() / 2, self.height() / 2
-        breathe = math.sin(self.phase) * 12 
         
-        # Deep backdrop aura
-        outer_grad = QRadialGradient(cx, cy, 180 + breathe)
-        outer_grad.setColorAt(0, QColor(90, 20, 200, 40))  
-        outer_grad.setColorAt(1, QColor(0, 0, 0, 0))
-        p.setBrush(outer_grad)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(int(cx - 200 - breathe), int(cy - 200 - breathe), int(400 + breathe*2), int(400 + breathe*2))
-        
-        # Hot inner core
-        core_grad = QRadialGradient(cx, cy, 80 - breathe * 0.5)
-        core_grad.setColorAt(0, QColor(0, 255, 255, 200)) 
-        core_grad.setColorAt(1, QColor(0, 0, 0, 0))
-        p.setBrush(core_grad)
-        p.drawEllipse(int(cx - 110 + breathe*0.5), int(cy - 110 + breathe*0.5), int(220 - breathe), int(220 - breathe))
-        
-        # Jagged Neural Waveform
-        eq_pen = QPen(QColor(0, 255, 255, 150))
-        eq_pen.setWidthF(2.5)
-        p.setPen(eq_pen)
-        p.setBrush(Qt.GlobalColor.transparent)
+        # Deep space background for the widget array
+        rect = QRectF(self.rect().adjusted(2, 2, -2, -2))
         path = QPainterPath()
-        points = 60
-        width = 180
-        start_x = cx - width/2
-        step = width / points
+        path.addRoundedRect(rect, 30, 30)
+        p.fillPath(path, QColor(8, 10, 14, 240))
         
-        path.moveTo(start_x, cy)
-        for i in range(1, points):
-            x = start_x + (i * step)
-            y_offset = (math.sin(self.phase * 5.0 + i * 1.5) + math.cos(self.phase * 7.0 - i * 0.5)) * 20
-            dampen = math.sin((i / points) * math.pi)
-            y = cy + (y_offset * dampen)
-            path.lineTo(x, y)
-        path.lineTo(start_x + width, cy)
-        p.drawPath(path)
+        cx, cy = self.width() / 2, self.height() / 2
+        
+        # Base Sphere Radius
+        sphere_radius = 110
+        global_shake = 0
+        
+        if self.state == "SPEAKING":
+            sphere_radius += math.sin(self.phase * 3.5) * 15
+            global_shake = 8 
+        elif self.state == "LISTENING":
+            sphere_radius += math.sin(self.phase * 1.0) * 8
+        elif self.state == "PROCESSING":
+            sphere_radius += math.sin(self.phase * 0.8) * 3
+        else:
+            sphere_radius += math.sin(self.phase * 0.3) * 3
 
-        # Ambient floating particles
+        # --- NEW POLISH: Pulsing Energy Nebula Core ---
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        core_grad = QRadialGradient(cx, cy, sphere_radius * 1.5)
+        core_grad.setColorAt(0, QColor(0, 100, 255, 60))    # Deep Blue center
+        core_grad.setColorAt(0.5, QColor(150, 40, 255, 30)) # Purple corona
+        core_grad.setColorAt(1, QColor(0, 0, 0, 0))         # Falloff
+        p.setBrush(core_grad)
         p.setPen(Qt.PenStyle.NoPen)
-        for pt in self.particles:
-            r = pt[2] + math.cos(self.phase * 0.5 + pt[1]) * 10 
-            px = cx + math.cos(math.radians(pt[0])) * r
-            py = cy + math.sin(math.radians(pt[0])) * r
-            p.setBrush(pt[4])
-            p.drawEllipse(int(px - pt[3]/2), int(py - pt[3]/2), int(pt[3]), int(pt[3]))
+        p.drawEllipse(int(cx - sphere_radius*2), int(cy - sphere_radius*2), int(sphere_radius*4), int(sphere_radius*4))
             
-        # Outer containment glass ring
-        p.setBrush(Qt.GlobalColor.transparent)
-        ring_pen = QPen(QColor(0, 255, 255, 40))
+        # --- NEW POLISH: Geometric Containment Rings ---
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        ring_pen = QPen(QColor(0, 210, 255, 50))
         ring_pen.setWidthF(1.5)
         p.setPen(ring_pen)
-        p.drawEllipse(int(cx - 150), int(cy - 150), 300, 300)
+        p.setBrush(Qt.GlobalColor.transparent)
+        
+        # Static subtle outer boundary
+        ring_radius = sphere_radius * 1.7
+        p.drawEllipse(int(cx - ring_radius), int(cy - ring_radius), int(ring_radius*2), int(ring_radius*2))
+        
+        # Rotating inner fragmented ring
+        ring_pen.setColor(QColor(200, 50, 255, 80))
+        ring_pen.setWidthF(2.0)
+        p.setPen(ring_pen)
+        span = 60 * 16 # 60 degree sweeps
+        start_angle = int((math.degrees(self.phase * -0.5)) % 360 * 16)
+        p.drawArc(int(cx - ring_radius*0.9), int(cy - ring_radius*0.9), int(ring_radius*1.8), int(ring_radius*1.8), start_angle, span)
+        p.drawArc(int(cx - ring_radius*0.9), int(cy - ring_radius*0.9), int(ring_radius*1.8), int(ring_radius*1.8), start_angle + (180*16), span)
+
+
+        # --- 3D PARTICLE RENDERER ---
+        cos_x = math.cos(self.rot_x)
+        sin_x = math.sin(self.rot_x)
+        cos_y = math.cos(self.rot_y)
+        sin_y = math.sin(self.rot_y)
+        
+        projected = []
+        
+        for pt in self.particles:
+            jx = random.uniform(-global_shake, global_shake) if global_shake else 0
+            jy = random.uniform(-global_shake, global_shake) if global_shake else 0
+            jz = random.uniform(-global_shake, global_shake) if global_shake else 0
+
+            scaled_x = (pt.base_x * sphere_radius) + jx
+            scaled_y = (pt.base_y * sphere_radius) + jy
+            scaled_z = (pt.base_z * sphere_radius) + jz
+
+            y1 = scaled_y * cos_x - scaled_z * sin_x
+            z1 = scaled_y * sin_x + scaled_z * cos_x
+            
+            x2 = scaled_x * cos_y + z1 * sin_y
+            z2 = -scaled_x * sin_y + z1 * cos_y
+            
+            screen_x = cx + x2
+            screen_y = cy + y1
+            depth = z2
+            
+            projected.append((screen_x, screen_y, depth))
+            
+        projected.sort(key=lambda p: p[2])
+        p.setPen(Qt.PenStyle.NoPen)
+        
+        for screen_x, screen_y, depth in projected:
+            depth_ratio = (depth + sphere_radius) / (sphere_radius * 2) 
+            depth_ratio = max(0.01, min(1.0, depth_ratio)) 
+            
+            alpha = int(50 + (205 * depth_ratio))
+            p.setBrush(QColor(0, 210, 255, alpha))
+            
+            dot_size = 1.6 + (depth_ratio * 1.5)
+            p.drawEllipse(QRectF(screen_x - dot_size/2, screen_y - dot_size/2, dot_size, dot_size))
 
 
 # ==============================================================================
-# MAIN DASHBOARD INTERFACE
+# MINIMALIST DESKTOP FRAME
 # ==============================================================================
 
 class AuraDashboard(QMainWindow):
     status_signal = pyqtSignal(str)
-    log_signal = pyqtSignal(str, str) # sender, message
+    log_signal = pyqtSignal(str, str) 
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AURA CORE COMMAND")
+        self.setWindowTitle("AURA SPHERE CORE")
         
-        # Completely translucent, borderless glass window
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setGeometry(50, 50, 1100, 650)
         
-        # Aggressive aesthetic stylesheet for elements not utilizing custom painting
-        self.setStyleSheet("""
-            QTextEdit { 
-                background-color: transparent; 
-                color: #e6edf3; 
-                font-family: 'Consolas';
-                font-size: 13px;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none; background: rgba(0,0,0,0); width: 8px; margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(0, 210, 255, 80); border-radius: 4px; min-height: 20px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
+        self.setGeometry(100, 100, 500, 600)
 
-        # Main Layout inside the invisible window bounds
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(25)
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(15, 15, 15, 15)
 
-        # --- LEFT: Visual Orb Core inside Glass Panel ---
-        self.left_panel = GlassPanel()
-        left_layout = QVBoxLayout(self.left_panel)
-        left_layout.setContentsMargins(20, 40, 20, 40)
+        self.sphere_core = AuraSphereWidget()
+        layout.addWidget(self.sphere_core, alignment=Qt.AlignmentFlag.AlignCenter)
         
-        self.orb = AuraOrbWidget()
-        
-        self.status_label = QLabel("SYSTEM STANDBY")
+        self.status_label = QLabel("SYSTEM ONLINE")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = QFont("Segoe UI", 18, QFont.Weight.Bold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 8)
+        font = QFont("Inter", 12, QFont.Weight.Bold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 5)
         self.status_label.setFont(font)
-        self.status_label.setStyleSheet("color: #FFFFFF;")
+        self.status_label.setStyleSheet("color: #00d2ff;")
         
-        left_layout.addWidget(self.orb, alignment=Qt.AlignmentFlag.AlignCenter)
-        left_layout.addStretch()
-        left_layout.addWidget(self.status_label)
-        main_layout.addWidget(self.left_panel, stretch=5)
+        layout.addWidget(self.status_label)
 
-        # --- RIGHT: Split Telemetry and Terminal over Glass ---
-        right_container = QVBoxLayout()
-        right_container.setSpacing(25)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(40)
+        shadow.setColor(QColor(0, 0, 0, 200))
+        shadow.setOffset(0, 15)
+        self.sphere_core.setGraphicsEffect(shadow)
 
-        # Top Right: Translucent Terminal
-        self.terminal_panel = GlassPanel()
-        term_layout = QVBoxLayout(self.terminal_panel)
-        
-        hdr = QLabel("DATA STREAM // COMMS")
-        hdr_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-        hdr_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4)
-        hdr.setFont(hdr_font)
-        hdr.setStyleSheet("color: #00d2ff;")
-        
-        self.terminal = QTextEdit()
-        self.terminal.setReadOnly(True)
-        self.log_signal.connect(self.append_log)
-        
-        term_layout.addWidget(hdr)
-        term_layout.addWidget(self.terminal)
-        right_container.addWidget(self.terminal_panel, stretch=6)
-
-        # Bottom Right: Holographic Telemetry Gauges
-        self.telemetry_panel = GlassPanel()
-        tel_layout = QHBoxLayout(self.telemetry_panel)
-        
-        self.cpu_gauge = CircularGauge("CPU CORE", QColor(0, 210, 255, 200))
-        self.ram_gauge = CircularGauge("RAM LOAD", QColor(200, 50, 255, 200))
-        self.bat_gauge = CircularGauge("POWER", QColor(0, 255, 100, 200))
-        
-        tel_layout.addWidget(self.cpu_gauge)
-        tel_layout.addWidget(self.ram_gauge)
-        tel_layout.addWidget(self.bat_gauge)
-        right_container.addWidget(self.telemetry_panel, stretch=4)
-        
-        main_layout.addLayout(right_container, stretch=4)
-
-        # Core wiring
         self.status_signal.connect(self.update_status)
-        self.tel_timer = QTimer(self)
-        self.tel_timer.timeout.connect(self.update_telemetry)
-        self.tel_timer.start(1500)
 
-    def append_log(self, sender, message):
-        time_str = QDateTime.currentDateTime().toString("HH:mm:ss")
-        if sender == "USER":
-            color = "#ff3399" # Hot pink text for users
-        elif sender == "AURA":
-            color = "#00d2ff" # Bright Cyan text for AI
-        else:
-            color = "#6e7681" # Cool gray for system
-
-        html = f"<div style='margin-bottom:8px;'><span style='color: #6e7681;'>[{time_str}]</span> <b style='color: {color};'>[{sender}]</b> <br/><span style='color: #e6edf3;'>{message}</span></div>"
-        self.terminal.append(html)
-        
-        # Auto-scroll to bottom
-        scrollbar = self.terminal.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+    def keyPressEvent(self, event):
+        """ INSTANT EMERGENCY ABORT: Bypasses Audio transcription wait """
+        if event.key() == Qt.Key.Key_Escape:
+            print("\n[AURA]: Emergency Abort triggered via ESC. Terminating.")
+            os._exit(0)
 
     def update_status(self, text):
-        self.status_label.setText(text.upper())
-
-    def update_telemetry(self):
-        vitals = get_system_vitals()
-        self.cpu_gauge.setValue(int(vitals.get("cpu", 0)))
-        self.ram_gauge.setValue(int(vitals.get("ram", 0)))
+        raw = text.upper()
+        self.status_label.setText(raw)
         
-        bat = vitals.get("battery", "AC Power")
-        if isinstance(bat, (int, float)):
-             self.bat_gauge.setValue(int(bat))
+        if "LISTENING" in raw:
+            self.sphere_core.state = "LISTENING"
+        elif "PROCESSING" in raw:
+            self.sphere_core.state = "PROCESSING"
+        elif "SPEAKING" in raw:
+            self.sphere_core.state = "SPEAKING"
         else:
-             self.bat_gauge.setValue(100)
+            self.sphere_core.state = "IDLE"
+
+    def append_log(self, sender, message):
+        pass 
