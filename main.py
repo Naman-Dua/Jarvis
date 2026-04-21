@@ -1,12 +1,15 @@
 import threading
+import queue
 import sys
 import os
 import re
 import time
 import traceback
 import winsound
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QCoreApplication
+
 from actions import perform_action
 from screen_analysis import analyze_screen, is_screen_request
 from gui import KoraDashboard
@@ -15,19 +18,31 @@ from tasks import ReminderManager, check_for_tasks
 from voice import speak
 from ears import extract_wake_command, listen, calibrate_microphone
 
-brain = KoraBrain()
+# ── Core objects ──────────────────────────────────────────────────────────────
+brain            = KoraBrain()
 reminder_manager = ReminderManager()
-sleep_mode = threading.Event()
+
+# Shared queue — both voice thread and text input feed into this.
+# Each item is a dict: {"text": str, "source": "voice" | "text"}
+command_queue = queue.Queue()
+
+# ── Flags / locks ─────────────────────────────────────────────────────────────
+sleep_mode          = threading.Event()
 wake_notice_pending = threading.Event()
-active_alert_ids = set()
-active_alerts_lock = threading.Lock()
+active_alert_ids    = set()
+active_alerts_lock  = threading.Lock()
+kora_busy           = threading.Event()   # set while Kora is processing/speaking
+
+# ── Config ────────────────────────────────────────────────────────────────────
 ENABLE_WAKE_WORD = os.getenv("KORA_ENABLE_WAKE_WORD", "0").lower() in {"1", "true", "yes", "on"}
-WAKE_STATUS = "LISTENING FOR WAKE WORD"
-COMMAND_STATUS = "LISTENING FOR COMMAND"
+WAKE_STATUS              = "LISTENING FOR WAKE WORD"
+COMMAND_STATUS           = "LISTENING FOR COMMAND"
 DEFAULT_LISTENING_STATUS = WAKE_STATUS if ENABLE_WAKE_WORD else "LISTENING..."
-SLEEPING_STATUS = "SLEEPING..."
-ALERT_REPEAT_INTERVAL = 10
-MAX_ALERT_REPEATS = 6
+SLEEPING_STATUS          = "SLEEPING..."
+ALERT_REPEAT_INTERVAL    = 10
+MAX_ALERT_REPEATS        = 6
+
+# ── Command sets ──────────────────────────────────────────────────────────────
 SHUTDOWN_COMMANDS = {
     "shutdown", "power down", "exit", "exit kora",
     "quit kora", "shutdown kora", "close kora",
@@ -41,38 +56,24 @@ RECALIBRATE_COMMANDS = {
     "calibrate mic", "fix microphone", "reset microphone",
 }
 SLEEP_COMMANDS = {
-    "go to sleep",
-    "sleep mode",
-    "go silent",
-    "be quiet",
-    "stay quiet",
-    "stop talking",
-    "don't talk",
-    "dont talk",
-    "do not talk",
-    "stop listening",
-    "mute yourself",
+    "go to sleep", "sleep mode", "go silent", "be quiet",
+    "stay quiet", "stop talking", "don't talk", "dont talk",
+    "do not talk", "stop listening", "mute yourself",
 }
 DISMISS_ALERT_COMMANDS = {
-    "dismiss reminder",
-    "stop reminder",
-    "stop the reminder",
-    "dismiss the reminder",
-    "dismiss timer",
-    "stop timer",
-    "stop the timer",
-    "dismiss alert",
-    "stop alert",
-    "got it",
-    "okay thanks",
-    "okay thank you",
+    "dismiss reminder", "stop reminder", "stop the reminder",
+    "dismiss the reminder", "dismiss timer", "stop timer",
+    "stop the timer", "dismiss alert", "stop alert",
+    "got it", "okay thanks", "okay thank you",
 }
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def normalize_voice_command(cmd):
-    normalized = re.sub(r"[^a-z0-9'\s]+", " ", str(cmd).lower())
-    normalized = re.sub(r"\b(kora|please)\b", " ", normalized)
-    return " ".join(normalized.split())
+    n = re.sub(r"[^a-z0-9'\s]+", " ", str(cmd).lower())
+    n = re.sub(r"\b(kora|please)\b", " ", n)
+    return " ".join(n.split())
 
 
 def command_matches(normalized, phrases):
@@ -83,13 +84,11 @@ def command_matches(normalized, phrases):
 
 
 def is_sleep_request(cmd):
-    normalized = normalize_voice_command(cmd)
-    return command_matches(normalized, SLEEP_COMMANDS)
+    return command_matches(normalize_voice_command(cmd), SLEEP_COMMANDS)
 
 
 def is_dismiss_alert_request(cmd):
-    normalized = normalize_voice_command(cmd)
-    return command_matches(normalized, DISMISS_ALERT_COMMANDS)
+    return command_matches(normalize_voice_command(cmd), DISMISS_ALERT_COMMANDS)
 
 
 def register_active_alert(item_id):
@@ -112,72 +111,83 @@ def dismiss_all_alerts():
         count = len(active_alert_ids)
         active_alert_ids.clear()
         return count
-def handle_wake_transition(ui):
-    if not wake_notice_pending.is_set():
-        return
-
-    wake_notice_pending.clear()
-    ui.log_signal.emit("SYSTEM", "Kora is awake again.")
-    ui.status_signal.emit("SPEAKING...")
-    speak("I'm awake.")
-    ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
 
 
-def wait_for_command(ui):
-    """Listen for a command, with wake-word gating only when explicitly enabled."""
-    if sleep_mode.is_set():
-        while True:
-            ui.status_signal.emit(SLEEPING_STATUS)
-            heard_text = listen()
-            if not heard_text:
-                continue
+# ── Voice listener thread ─────────────────────────────────────────────────────
 
-            wake_command = extract_wake_command(heard_text)
-            if wake_command is None:
-                continue
-
-            sleep_mode.clear()
-            wake_notice_pending.set()
-            if wake_command:
-                return wake_command
-            return ""
-
-    if not ENABLE_WAKE_WORD:
-        ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
-        return listen()
-
+def voice_listener_loop(ui):
+    """
+    Runs forever in a background thread.
+    Listens for voice commands and puts them into command_queue.
+    Completely independent of the text input path.
+    """
     while True:
-        ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
-        heard_text = listen()
-        if not heard_text:
-            continue
+        try:
+            if sleep_mode.is_set():
+                ui.status_signal.emit(SLEEPING_STATUS)
+                heard = listen()
+                if not heard:
+                    continue
+                wake_cmd = extract_wake_command(heard)
+                if wake_cmd is None:
+                    continue
+                sleep_mode.clear()
+                wake_notice_pending.set()
+                if wake_cmd:
+                    command_queue.put({"text": wake_cmd, "source": "voice"})
+                continue
 
-        command_after_wake = extract_wake_command(heard_text)
-        if command_after_wake is None:
-            continue
+            if not ENABLE_WAKE_WORD:
+                ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                heard = listen()
+                if heard:
+                    command_queue.put({"text": heard, "source": "voice"})
+                continue
 
-        if command_after_wake:
-            return command_after_wake
+            # Wake-word mode
+            ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+            heard = listen()
+            if not heard:
+                continue
+            wake_cmd = extract_wake_command(heard)
+            if wake_cmd is None:
+                continue
+            if wake_cmd:
+                command_queue.put({"text": wake_cmd, "source": "voice"})
+            else:
+                ui.log_signal.emit("SYSTEM", "Wake word detected.")
+                ui.status_signal.emit(COMMAND_STATUS)
+                speak("Yes?")
+                follow_up = listen()
+                if follow_up:
+                    command_queue.put({"text": follow_up, "source": "voice"})
 
-        ui.log_signal.emit("SYSTEM", "Wake word detected.")
-        ui.status_signal.emit(COMMAND_STATUS)
-        speak("Yes?")
-        follow_up = listen()
-        if follow_up:
-            return follow_up
+        except Exception:
+            print(f"[Voice listener error]: {traceback.format_exc()}")
+            time.sleep(1)
 
+
+# ── Text input handler (called from Qt signal) ────────────────────────────────
+
+def on_text_submitted(text: str):
+    """
+    Called on the Qt thread when the user submits a typed message.
+    Just drops it into the shared queue — the logic thread picks it up.
+    """
+    if text.strip():
+        command_queue.put({"text": text.strip(), "source": "text"})
+
+
+# ── Reminder loop ─────────────────────────────────────────────────────────────
 
 def reminder_loop(ui):
     while True:
         try:
             due_items = reminder_manager.pop_due()
             for item in due_items:
-                alert_thread = threading.Thread(
-                    target=deliver_reminder_alert,
-                    args=(ui, item),
-                    daemon=True,
-                )
-                alert_thread.start()
+                threading.Thread(
+                    target=deliver_reminder_alert, args=(ui, item), daemon=True
+                ).start()
         except Exception:
             print(f"Reminder loop error: {traceback.format_exc()}")
         time.sleep(1)
@@ -195,171 +205,232 @@ def deliver_reminder_alert(ui, item):
     base_message = item.trigger_message()
     was_sleeping = sleep_mode.is_set()
     register_active_alert(item.id)
-
     try:
         for index in range(MAX_ALERT_REPEATS):
             if not is_alert_active(item.id):
                 break
-
             if index == 0:
                 message = base_message
             elif index == MAX_ALERT_REPEATS - 1:
                 message = f"Final reminder: {base_message}"
             else:
                 message = f"Follow-up reminder: {base_message}"
-
-            if was_sleeping and index == 0:
-                ui.log_signal.emit("SYSTEM", "Reminder is interrupting sleep mode.")
-            elif index > 0:
-                ui.log_signal.emit("SYSTEM", f"Reminder follow-up {index + 1} of {MAX_ALERT_REPEATS}.")
-
             ui.log_signal.emit("REMINDER", message)
             ui.status_signal.emit("SPEAKING...")
             play_alert_tone()
             speak(message)
             ui.status_signal.emit(SLEEPING_STATUS if sleep_mode.is_set() else DEFAULT_LISTENING_STATUS)
-
             if index < MAX_ALERT_REPEATS - 1 and is_alert_active(item.id):
                 time.sleep(ALERT_REPEAT_INTERVAL)
     finally:
         clear_active_alert(item.id)
 
+
+# ── Main logic loop ───────────────────────────────────────────────────────────
+
 def kora_logic(ui):
+    """
+    Single loop that processes commands from the shared queue.
+    Commands arrive from EITHER the voice thread OR the text input — 
+    this loop doesn't care which, it handles both identically.
+    """
     ui.status_signal.emit("SYSTEM ONLINE")
     ui.log_signal.emit("SYSTEM", "Kora core initialized.")
 
-    # ── Mic calibration at startup ──────────────────────────────────────────
+    # Calibrate mic at startup
     ui.status_signal.emit("CALIBRATING MIC...")
     ui.log_signal.emit("SYSTEM", "Calibrating microphone — stay silent for 2 seconds...")
     calibrate_microphone(duration=2.0)
-    ui.log_signal.emit("SYSTEM", "Microphone calibrated.")
+    ui.log_signal.emit("SYSTEM", "Microphone calibrated. You can type or speak.")
 
-    speak("Welcome back. Systems are online.")
+    speak("Welcome back. Systems online. You can speak or type to me.")
+
     if ENABLE_WAKE_WORD:
         ui.log_signal.emit("SYSTEM", "Wake word mode enabled.")
     else:
-        ui.log_signal.emit("SYSTEM", "Wake word mode disabled. Direct listening active.")
+        ui.log_signal.emit("SYSTEM", "Direct listening active.")
+
     ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+
+    # Handle wake transition once voice loop wakes from sleep
+    def handle_wake_transition():
+        if not wake_notice_pending.is_set():
+            return
+        wake_notice_pending.clear()
+        ui.log_signal.emit("SYSTEM", "Kora is awake.")
+        ui.status_signal.emit("SPEAKING...")
+        speak("I'm awake.")
+        ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
 
     while True:
         try:
-            query = wait_for_command(ui)
-            handle_wake_transition(ui)
-            if not query:
-                continue
-            ui.log_signal.emit("USER", query)
-            ui.status_signal.emit("PROCESSING...")
-            cmd = query.lower()
+            # Block until a command arrives (from voice or text)
+            item = command_queue.get(timeout=0.2)
+        except queue.Empty:
+            handle_wake_transition()
+            continue
 
-            # INSTANT POWER DOWN
+        handle_wake_transition()
+
+        query  = item["text"].strip()
+        source = item["source"]   # "voice" or "text"
+
+        if not query:
+            continue
+
+        # Show in log with source hint
+        source_tag = "🎙" if source == "voice" else "⌨"
+        ui.log_signal.emit("USER", f"{source_tag} {query}")
+        ui.status_signal.emit("PROCESSING...")
+        kora_busy.set()
+
+        cmd = query.lower()
+
+        try:
+            # ── Shutdown ──────────────────────────────────────────────────────
             if cmd.strip() in SHUTDOWN_COMMANDS:
-                ui.log_signal.emit("SYSTEM", "Shutting down immediately. Goodbye.")
-                print("\nKORA: Shutting down immediately.")
+                ui.log_signal.emit("SYSTEM", "Shutting down. Goodbye.")
+                speak("Goodbye.")
                 QCoreApplication.quit()
                 os._exit(0)
 
-            # Recalibrate mic on voice command
-            normalized_cmd = normalize_voice_command(cmd)
-            if command_matches(normalized_cmd, RECALIBRATE_COMMANDS):
-                recal_reply = "Recalibrating microphone. Please stay silent for 2 seconds."
-                ui.log_signal.emit("KORA", recal_reply)
-                speak(recal_reply)
+            norm_cmd = normalize_voice_command(cmd)
+
+            # ── Recalibrate ───────────────────────────────────────────────────
+            if command_matches(norm_cmd, RECALIBRATE_COMMANDS):
+                r = "Recalibrating microphone. Please stay silent for 2 seconds."
+                ui.log_signal.emit("KORA", r)
+                speak(r)
                 ui.status_signal.emit("CALIBRATING MIC...")
                 calibrate_microphone(duration=2.0)
-                done_reply = "Microphone recalibrated."
-                ui.log_signal.emit("SYSTEM", done_reply)
-                speak(done_reply)
+                done = "Microphone recalibrated."
+                ui.log_signal.emit("SYSTEM", done)
+                speak(done)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
-            # Reset conversation
-            if command_matches(normalized_cmd, RESET_COMMANDS):
+            # ── Reset conversation ────────────────────────────────────────────
+            if command_matches(norm_cmd, RESET_COMMANDS):
                 brain.reset_conversation()
-                reset_reply = "Done. Conversation history cleared. Starting fresh."
-                ui.log_signal.emit("KORA", reset_reply)
-                ui.status_signal.emit("SPEAKING...")
-                speak(reset_reply)
+                r = "Conversation history cleared. Starting fresh."
+                ui.log_signal.emit("KORA", r)
+                speak(r)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
+            # ── Dismiss alert ─────────────────────────────────────────────────
             if is_dismiss_alert_request(cmd):
                 dismissed = dismiss_all_alerts()
-                dismiss_reply = (
-                    f"Stopped {dismissed} active reminder alert{'s' if dismissed != 1 else ''}."
-                    if dismissed
-                    else "There is no active reminder alert right now."
-                )
-                ui.log_signal.emit("KORA", dismiss_reply)
-                ui.status_signal.emit("SPEAKING...")
-                speak(dismiss_reply)
-                ui.status_signal.emit(SLEEPING_STATUS if sleep_mode.is_set() else DEFAULT_LISTENING_STATUS)
+                r = (f"Stopped {dismissed} active alert{'s' if dismissed != 1 else ''}."
+                     if dismissed else "No active alerts right now.")
+                ui.log_signal.emit("KORA", r)
+                speak(r)
+                ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
+            # ── Sleep ─────────────────────────────────────────────────────────
             if is_sleep_request(cmd):
                 sleep_mode.set()
-                sleep_reply = "Going to sleep. Say Hey Kora to wake me."
-                ui.log_signal.emit("KORA", sleep_reply)
-                ui.status_signal.emit("SPEAKING...")
-                speak(sleep_reply)
+                r = "Going to sleep. Say Hey Kora to wake me."
+                ui.log_signal.emit("KORA", r)
+                speak(r)
                 ui.status_signal.emit(SLEEPING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
-            # Desktop Action Logic
+            # ── Desktop actions ───────────────────────────────────────────────
             action_reply = perform_action(cmd)
             if action_reply:
                 ui.log_signal.emit("KORA", action_reply)
                 ui.status_signal.emit("SPEAKING...")
                 speak(action_reply)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
+            # ── Screen analysis ───────────────────────────────────────────────
             if is_screen_request(cmd):
                 screen_reply = analyze_screen(query)
                 ui.log_signal.emit("KORA", screen_reply)
-                ui.status_signal.emit("SPEAKING...")
                 speak(screen_reply)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
-            # Task/Reminder Logic
+            # ── Tasks / reminders ─────────────────────────────────────────────
             task = check_for_tasks(cmd, reminder_manager)
             if task:
                 ui.log_signal.emit("KORA", task["reply"])
-                ui.status_signal.emit("SPEAKING...")
                 speak(task["reply"])
                 if task.get("action") == "schedule" and task.get("item"):
                     brain.learn(
-                        f"{task['item'].kind.upper()} scheduled: {task['item'].task} at {task['item'].due_phrase()}"
+                        f"{task['item'].kind.upper()} scheduled: "
+                        f"{task['item'].task} at {task['item'].due_phrase()}"
                     )
-                ui.status_signal.emit("TASK LOGGED")
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
                 continue
 
-            # General Reply
+            # ── General reply (LLM) ───────────────────────────────────────────
             brain.learn(query)
-            
             res = brain.generate_reply(query)
-            
             ui.log_signal.emit("KORA", res)
             ui.status_signal.emit("SPEAKING...")
-            speak(res)
+
+            # Speak only if the command came from voice
+            # For typed input, response is shown but NOT spoken (less jarring)
+            if source == "voice":
+                speak(res)
+
             ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
-            
+            ui.re_enable_input()
+            kora_busy.clear()
+
         except Exception as e:
-            err_msg = f"Crash prevented: {str(e)}"
-            ui.log_signal.emit("SYSTEM ERROR", err_msg)
-            print(f"Exception logic branch: {traceback.format_exc()}")
+            err = f"Error: {str(e)}"
+            ui.log_signal.emit("SYSTEM ERROR", err)
+            print(f"[Logic error]: {traceback.format_exc()}")
             ui.status_signal.emit("RECOVERED")
+            ui.re_enable_input()
+            kora_busy.clear()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     hud = KoraDashboard()
     hud.show()
 
-    # Start logic thread
-    t = threading.Thread(target=kora_logic, args=(hud,), daemon=True)
-    t.start()
-    reminder_thread = threading.Thread(target=reminder_loop, args=(hud,), daemon=True)
+    # Connect text input signal to queue handler
+    hud.text_input_signal.connect(on_text_submitted)
+
+    # Voice listener — runs forever in background, puts into command_queue
+    voice_thread = threading.Thread(
+        target=voice_listener_loop, args=(hud,), daemon=True
+    )
+    voice_thread.start()
+
+    # Main logic — reads from command_queue and responds
+    logic_thread = threading.Thread(
+        target=kora_logic, args=(hud,), daemon=True
+    )
+    logic_thread.start()
+
+    # Reminder checker
+    reminder_thread = threading.Thread(
+        target=reminder_loop, args=(hud,), daemon=True
+    )
     reminder_thread.start()
 
     sys.exit(app.exec())
