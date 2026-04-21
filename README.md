@@ -1,101 +1,101 @@
-# 🤖 Kora – AI Desktop Assistant
-<p align="center"> <img src="https://readme-typing-svg.herokuapp.com?size=24&duration=2500&color=00F7FF&center=true&vCenter=true&width=700&lines=Kora+-+Your+Personal+AI+Assistant;Voice+%7C+Automation+%7C+Memory;Built+for+Speed+%26+Intelligence" /> </p> <p align="center"> <img src="https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python"> <img src="https://img.shields.io/badge/AI-Assistant-black?style=for-the-badge"> <img src="https://img.shields.io/badge/Voice-Controlled-success?style=for-the-badge"> <img src="https://img.shields.io/github/stars/Naman-Dua/Jarvis?style=for-the-badge"> <img src="https://img.shields.io/github/forks/Naman-Dua/Jarvis?style=for-the-badge"> </p>
+# Kora - AI Desktop Assistant
 
-# 🎯 Overview
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/AI-Desktop%20Assistant-black?style=for-the-badge" alt="AI Assistant">
+  <img src="https://img.shields.io/badge/Voice-Controlled-success?style=for-the-badge" alt="Voice Controlled">
+</p>
 
-Kora is a modular AI desktop assistant built using Python that can:
+Kora is a modular desktop assistant built with Python. It combines voice input, command routing, automation, memory, and a GUI to provide a practical base for building advanced assistant workflows.
 
-Listen to your voice 🎤
-Understand commands 🧠
-Execute real tasks ⚙️
-Store memory 💾
-Interact via GUI 🖥️
+## Features
 
-Unlike basic assistants, Kora is designed with a scalable architecture, making it closer to a real-world AI system.
+- Voice command capture and transcription
+- Command routing through a centralized brain module
+- Desktop action execution (apps/web tasks)
+- Reminder and scheduling workflows
+- Screen capture and analysis support
+- Persistent memory with SQLite
+- PyQt-based interactive dashboard
 
+## Architecture
 
-# 🧠 Core Modules (Your Actual System)
+| Module | Purpose |
+| --- | --- |
+| `main.py` | Application entry point and runtime orchestration |
+| `brain.py` | Decision-making and conversation handling |
+| `ears.py` | Voice capture and speech-to-text pipeline |
+| `voice.py` | Text-to-speech output |
+| `actions.py` | System and browser action execution |
+| `tasks.py` | Reminder/task parsing and scheduling |
+| `mode_select.py` | Runtime mode selection dialog |
+| `search_engine.py` | Web lookup and information retrieval |
+| `screen_analysis.py` | Screen capture and vision-style analysis |
+| `storage.py` | SQLite persistence and memory management |
+| `gui.py` | Desktop interface and visualization |
 
-| Module               | Role                              |
-| -------------------- | --------------------------------- |
-| `main.py`            | Entry point of the assistant      |
-| `brain.py`           | Decision-making & command routing |
-| `ears.py`            | Captures voice input              |
-| `voice.py`           | Converts text → speech            |
-| `actions.py`         | Executes commands                 |
-| `tasks.py`           | Handles automation workflows      |
-| `mode_select.py`     | Switches assistant modes          |
-| `search_engine.py`   | Web search & info retrieval       |
-| `screen_analysis.py` | Reads and analyzes screen content |
-| `storage.py`         | Handles memory logic              |
-| `kora_memory.db`     | Stores persistent data            |
-| `gui.py`             | User interface                    |
+## Project Flow
 
+<img width="1411" height="1337" alt="Kora architecture flow" src="https://github.com/user-attachments/assets/f126f5c1-e4cf-480e-8d36-44f51d96402e" />
 
-# ⚡ How Kora Works
+## Quick Start
 
-<img width="1411" height="1337" alt="mermaid-diagram" src="https://github.com/user-attachments/assets/f126f5c1-e4cf-480e-8d36-44f51d96402e" />
+### 1) Clone the repository
 
-
-# ✨ Key Features (Based on Your Code)
-🎤 Real-time voice command processing
-🧠 Central AI brain for decision routing
-🔄 Multi-mode assistant system
-🌐 Built-in search engine
-🖥️ Screen understanding capability
-⚙️ Task automation engine
-💾 Persistent memory using SQLite
-🖥️ GUI-based interaction
-
-# ⚙️ Installation
-
+```bash
 git clone https://github.com/Naman-Dua/Jarvis.git
 cd Jarvis
+```
+
+### 2) Install dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-# ▶️ Run the Assistant
+### 3) Run Kora
 
+```bash
 python main.py
+```
 
+## Requirements
 
-# ⚠️ Important Notes
-Microphone access is required 🎤
-Some features require internet 🌐
-API keys (if used) should be stored in .env
-🔥 What Makes Kora Different
+- Python 3.10+
+- Working microphone input
+- Internet connection for features that depend on web/model calls
 
-Most student projects:
+## Configuration
 
-❌ Single file
-❌ Basic commands
+- Store API keys and environment-specific settings in a `.env` file.
+- Keep secrets out of source control.
 
-# Kora:
+## Roadmap
 
-✅ Modular system
-✅ Memory + automation
-✅ Screen + search integration
-✅ Scalable architecture
-🚀 Future Improvements
-🤖 LLM integration (ChatGPT-level responses)
-🧠 Context-aware memory system
-🌐 Browser automation
-📱 Remote/mobile control
-🎨 Advanced futuristic UI
-📊 Stats
-<p align="center"> <img src="https://github-readme-stats.vercel.app/api?username=Naman-Dua&show_icons=true&theme=tokyonight"/> </p>
-👨‍💻 Author
+- Deeper LLM integration for richer responses
+- Improved context-aware long-term memory
+- Browser automation extensions
+- Remote/mobile control support
+- Enhanced UI/UX and telemetry
 
-Naman Dua
-GitHub: https://github.com/Naman-Dua
+## Contributing
 
-# ⭐ Support
+Contributions are welcome. If you want to improve Kora:
 
-If you like Kora:
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Open a pull request
 
-⭐ Star the repo
-🍴 Fork it
-🚀 Share it
+## Author
 
-# ⚡ Final Line
+Naman Dua  
+GitHub: [Naman-Dua](https://github.com/Naman-Dua)
 
-Kora isn’t just an assistant — it’s a foundation for building your own AI system.
+## Support
+
+If this project helps you, please consider:
+
+- Starring the repository
+- Forking it
+- Sharing it with others
