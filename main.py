@@ -13,7 +13,7 @@ from gui import KoraDashboard
 from brain import KoraBrain
 from tasks import ReminderManager, check_for_tasks
 from voice import speak
-from ears import extract_wake_command, listen
+from ears import extract_wake_command, listen, calibrate_microphone
 
 brain = KoraBrain()
 reminder_manager = ReminderManager()
@@ -29,21 +29,16 @@ SLEEPING_STATUS = "SLEEPING..."
 ALERT_REPEAT_INTERVAL = 10
 MAX_ALERT_REPEATS = 6
 SHUTDOWN_COMMANDS = {
-    "shutdown",
-    "power down",
-    "exit",
-    "exit kora",
-    "quit kora",
-    "shutdown kora",
-    "close kora",
+    "shutdown", "power down", "exit", "exit kora",
+    "quit kora", "shutdown kora", "close kora",
 }
 RESET_COMMANDS = {
-    "forget everything",
-    "reset conversation",
-    "clear memory",
-    "start fresh",
-    "wipe memory",
-    "clear conversation",
+    "forget everything", "reset conversation", "clear memory",
+    "start fresh", "wipe memory", "clear conversation",
+}
+RECALIBRATE_COMMANDS = {
+    "recalibrate", "recalibrate mic", "calibrate microphone",
+    "calibrate mic", "fix microphone", "reset microphone",
 }
 SLEEP_COMMANDS = {
     "go to sleep",
@@ -231,8 +226,15 @@ def deliver_reminder_alert(ui, item):
 
 def kora_logic(ui):
     ui.status_signal.emit("SYSTEM ONLINE")
-    ui.log_signal.emit("SYSTEM", "Kora core initialized. Native graphics engaged.")
-    speak("Welcome back. All systems are online and memory is loaded.")
+    ui.log_signal.emit("SYSTEM", "Kora core initialized.")
+
+    # ── Mic calibration at startup ──────────────────────────────────────────
+    ui.status_signal.emit("CALIBRATING MIC...")
+    ui.log_signal.emit("SYSTEM", "Calibrating microphone — stay silent for 2 seconds...")
+    calibrate_microphone(duration=2.0)
+    ui.log_signal.emit("SYSTEM", "Microphone calibrated.")
+
+    speak("Welcome back. Systems are online.")
     if ENABLE_WAKE_WORD:
         ui.log_signal.emit("SYSTEM", "Wake word mode enabled.")
     else:
@@ -249,15 +251,28 @@ def kora_logic(ui):
             ui.status_signal.emit("PROCESSING...")
             cmd = query.lower()
 
-            # INSTANT POWER DOWN (Zero Freezing)
+            # INSTANT POWER DOWN
             if cmd.strip() in SHUTDOWN_COMMANDS:
                 ui.log_signal.emit("SYSTEM", "Shutting down immediately. Goodbye.")
                 print("\nKORA: Shutting down immediately.")
                 QCoreApplication.quit()
-                os._exit(0) # Immediate OS-level process kill
+                os._exit(0)
 
-            # Conversation reset (clears DB log + RAM history)
+            # Recalibrate mic on voice command
             normalized_cmd = normalize_voice_command(cmd)
+            if command_matches(normalized_cmd, RECALIBRATE_COMMANDS):
+                recal_reply = "Recalibrating microphone. Please stay silent for 2 seconds."
+                ui.log_signal.emit("KORA", recal_reply)
+                speak(recal_reply)
+                ui.status_signal.emit("CALIBRATING MIC...")
+                calibrate_microphone(duration=2.0)
+                done_reply = "Microphone recalibrated."
+                ui.log_signal.emit("SYSTEM", done_reply)
+                speak(done_reply)
+                ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                continue
+
+            # Reset conversation
             if command_matches(normalized_cmd, RESET_COMMANDS):
                 brain.reset_conversation()
                 reset_reply = "Done. Conversation history cleared. Starting fresh."
