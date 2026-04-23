@@ -1,95 +1,51 @@
-import traceback
+import ollama
+import json
 
-try:
-    import spacy
-    # Load the small English pipeline
-    nlp = spacy.load("en_core_web_sm")
-except ImportError:
-    print("[NLP] Spacy is not installed. To enable auto-learning:")
-    print("      Run: pip install spacy")
-    print("      Run: python -m spacy download en_core_web_sm")
-    nlp = None
-except OSError:
-    print("[NLP] Spacy model 'en_core_web_sm' is not installed. To enable auto-learning:")
-    print("      Run: python -m spacy download en_core_web_sm")
-    nlp = None
-except Exception as e:
-    print(f"[NLP] Failed to initialize spacy: {e}")
-    nlp = None
-
-
-def extract_facts(text):
+def extract_facts(text, model_name="llama3.1:8b"):
     """
-    Uses Spacy dependency parsing to extract declarative facts about the user.
-    Examples:
-        "My favorite color is blue" -> "User's favorite color is blue"
-        "I am a software engineer" -> "User is a software engineer"
-        "I live in New York" -> "User lives in New York"
-        "I like eating pizza" -> "User likes eating pizza"
+    Uses the local LLM to extract facts, preferences, and important memory points.
+    Returns a list of extracted facts.
     """
-    if not nlp:
-        return []
+    prompt = f"""
+You are Kora's autonomous memory extraction module. Analyze the user's text and extract any long-term factual information, user preferences, states, relationships, or important details worth remembering. 
+Do not extract transient commands, casual chat, or questions.
 
+Facts to ALWAYS extract:
+- User's name, age, residence, occupation, family members, or pets (e.g. "My dog's name is Rex" -> "User's dog's name is Rex").
+- User's likes, dislikes, habits, and preferences (e.g. "I live in New York" -> "User lives in New York", "I like to eat pizza" -> "User likes to eat pizza").
+- Long-term goals, states, or needs.
+
+Format your output strictly as a JSON list of strings. Each string should be a clear, standalone fact about the user.
+If there is nothing worth remembering (e.g. casual chat, short commands like "turn off lights", "hi"), output an empty list: []
+
+Examples:
+"My dog's name is Rex" -> ["User's dog's name is Rex"]
+"I am a software engineer and I live in Austin" -> ["User is a software engineer", "User lives in Austin"]
+"I love watching movies on weekends" -> ["User loves watching movies on weekends"]
+"What time is it?" -> []
+"Can you open Chrome?" -> []
+"Turn off the lights" -> []
+
+User text: {text}
+Output JSON list ONLY:
+"""
     try:
-        doc = nlp(text)
-        facts = []
-
-        for sent in doc.sents:
-            # Rule 1: "My [noun] is [value]"
-            root = sent.root
-            if root.lemma_ == "be":
-                subj = None
-                attr = None
-                for child in root.children:
-                    if child.dep_ in ("nsubj", "nsubjpass"):
-                        subj = child
-                    if child.dep_ in ("attr", "acomp"):
-                        attr = child
-                
-                if subj and attr:
-                    has_my = any(t.text.lower() == "my" for t in subj.subtree)
-                    if has_my:
-                        subj_text = " ".join([t.text for t in subj.subtree if t.text.lower() != "my"]).strip()
-                        # Fix formatting for 's (e.g. "dog 's name" -> "dog's name")
-                        subj_text = subj_text.replace(" 's", "'s")
-                        attr_text = " ".join([t.text for t in attr.subtree]).strip()
-                        fact = f"User's {subj_text} is {attr_text}"
-                        fact = " ".join(fact.split())
-                        facts.append(fact)
-
-            # Rule 2: "I [verb] [complements]"
-            for token in sent:
-                if token.dep_ == "nsubj" and token.text.lower() == "i":
-                    verb = token.head
-                    
-                    if verb.lemma_ == "be":
-                        # "I am X"
-                        for child in verb.children:
-                            if child.dep_ in ("attr", "acomp"):
-                                attr_text = " ".join([t.text for t in child.subtree]).strip()
-                                facts.append(f"User is {attr_text}")
-                                break
-                    else:
-                        # Action verbs like want, like, live, work
-                        verb_lemma = verb.lemma_
-                        # Filter to a specific set of strong preference/state verbs to reduce noise
-                        if verb_lemma in ("want", "need", "like", "love", "hate", "live", "work", "study", "play", "enjoy", "prefer"):
-                            complements = []
-                            for child in verb.children:
-                                if child.dep_ in ("dobj", "prep", "xcomp", "acomp"):
-                                    complements.append(" ".join([t.text for t in child.subtree]))
-                            
-                            if complements:
-                                comp_text = " ".join(complements).strip()
-                                # Handle third-person singular (s / es)
-                                suffix = "es" if verb_lemma.endswith(("s", "sh", "ch", "x", "z", "o")) else "s"
-                                fact = f"User {verb_lemma}{suffix} {comp_text}"
-                                fact = " ".join(fact.split())
-                                facts.append(fact)
-
-        return facts
+        response = ollama.generate(model=model_name, prompt=prompt)
+        content = response['response'].strip()
+        
+        # Try to parse the JSON output
+        # Sometimes the LLM might add markdown formatting like ```json ... ```
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+            
+        facts = json.loads(content)
+        if isinstance(facts, list):
+            return facts
+        return []
     except Exception as e:
-        print(f"[NLP] Error extracting facts: {e}")
+        print(f"[LLM Memory Extractor Error] {e}")
         return []
 
 if __name__ == "__main__":

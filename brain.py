@@ -36,7 +36,7 @@ class KoraBrain:
 
     def learn(self, text):
         from nlp_memory import extract_facts
-        facts = extract_facts(text)
+        facts = extract_facts(text, self.model_name)
         for fact in facts:
             store_info("memory", fact)
             print(f"[KORA LEARNED] {fact}")
