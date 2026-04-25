@@ -12,8 +12,7 @@ from storage import (
     store_info,
 )
 from task_memory import get_active_task_context
-from screen_analysis import is_screen_request, capture_screen, get_available_vision_model
-import os
+
 class KoraBrain:
     def __init__(self):
         init_db()
@@ -53,54 +52,44 @@ class KoraBrain:
         context_items = retrieve_info(text)
         context_string = " | ".join(context_items[:5])
         active_tasks = get_active_task_context()
+        
         prompt_context = []
         if context_string:
             prompt_context.append(f"Relevant memory: {context_string}")
         if active_tasks:
             prompt_context.append(f"Active tasks: {active_tasks}")
 
+        # Construct the current prompt with context
         if prompt_context:
-            full_user_prompt = f"[{' | '.join(prompt_context)}]\n\nUser says: {user_input}"
+            current_user_prompt = f"[{' | '.join(prompt_context)}]\n\nUser says: {user_input}"
         else:
-            full_user_prompt = user_input
+            current_user_prompt = user_input
 
-        self.conversation_history.append({"role": "user", "content": full_user_prompt})
+        # Add ONLY the raw input to the permanent history for future turns
+        self.conversation_history.append({"role": "user", "content": user_input})
         if len(self.conversation_history) > self.max_history:
             self.conversation_history = self.conversation_history[-self.max_history:]
 
-        screenshot_path = None
-        model_to_use = self.model_name
-
-        if is_screen_request(text):
-            vision_model = get_available_vision_model()
-            if vision_model:
-                try:
-                    screenshot_path = capture_screen()
-                    self.conversation_history[-1]["images"] = [screenshot_path]
-                    model_to_use = vision_model
-                except Exception as e:
-                    print(f"[Vision Error]: {e}")
-            else:
-                self.conversation_history.pop() # remove the user prompt since we abort
-                return "I couldn't find a vision model to look at your screen. Please install llama3.2-vision."
-
         try:
+            # Prepare messages for Ollama, replacing the last message with the context-aware one
+            llm_messages = [
+                {"role": "system", "content": self.system_instruction},
+                *self.conversation_history[:-1],
+                {"role": "user", "content": current_user_prompt}
+            ]
+
             response = ollama.chat(
-                model=model_to_use,
-                messages=[
-                    {"role": "system", "content": self.system_instruction},
-                    *self.conversation_history,
-                ],
+                model=self.model_name,
+                messages=llm_messages,
             )
 
             reply = response["message"]["content"].strip()
             self.conversation_history.append({"role": "assistant", "content": reply})
-            save_message("user", full_user_prompt)
-            save_message("assistant", reply)
             
-            if screenshot_path and os.path.exists(screenshot_path):
-                os.remove(screenshot_path)
-                
+            # Save raw message to DB
+            save_message("user", user_input)
+            save_message("assistant", reply)
+
             return reply
         except Exception as exc:
             print(f"[Kora Brain Error]: {exc}")

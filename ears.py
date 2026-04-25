@@ -45,8 +45,7 @@ WAKE_WORD_PATTERNS = [
 
 # ── Whisper hallucination filter ──────────────────────────────────────────────
 HALLUCINATION_PHRASES = {
-    "thank you", "thanks", "thanks for watching", "you", "bye", "goodbye",
-    ".", "..", "...", "okay", "ok", "hmm", "um", "uh", "ah", "oh",
+    "thanks for watching", "you", ".", "..", "...", "hmm", "um", "uh", "ah", "oh",
     "thank you for watching", "please subscribe", "see you next time",
 }
 

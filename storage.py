@@ -2,22 +2,26 @@ import json
 import sqlite3
 import hashlib
 import chromadb
+import threading
 from datetime import datetime
 
 DB_PATH = "kora_memory.db"
 
 chroma_client = None
 chroma_collection = None
+_db_lock = threading.Lock()
+_chroma_lock = threading.Lock()
 
 
 def init_chroma():
     global chroma_client, chroma_collection
-    if chroma_client is None:
-        try:
-            chroma_client = chromadb.PersistentClient(path="kora_chroma_db")
-            chroma_collection = chroma_client.get_or_create_collection(name="kora_memories")
-        except Exception as e:
-            print(f"[Storage] Failed to init ChromaDB: {e}")
+    with _chroma_lock:
+        if chroma_client is None:
+            try:
+                chroma_client = chromadb.PersistentClient(path="kora_chroma_db")
+                chroma_collection = chroma_client.get_or_create_collection(name="kora_memories")
+            except Exception as e:
+                print(f"[Storage] Failed to init ChromaDB: {e}")
 
 
 def _connect():
@@ -26,118 +30,119 @@ def _connect():
 
 def init_db():
     """Initialize all tables. Safe to call multiple times."""
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memories (
-                id        INTEGER PRIMARY KEY,
-                category  TEXT,
-                content   TEXT UNIQUE,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    with _db_lock:
+        with _connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memories (
+                    id        INTEGER PRIMARY KEY,
+                    category  TEXT,
+                    content   TEXT UNIQUE,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS conversation_logs (
-                id        INTEGER PRIMARY KEY,
-                role      TEXT NOT NULL,
-                content   TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_logs (
+                    id        INTEGER PRIMARY KEY,
+                    role      TEXT NOT NULL,
+                    content   TEXT NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_memory_content
-            ON memories (content)
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS telemetry_events (
-                id          INTEGER PRIMARY KEY,
-                event_name  TEXT NOT NULL,
-                source      TEXT,
-                value       TEXT,
-                session_id  TEXT,
-                timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_content
+                ON memories (content)
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_telemetry_event_name
-            ON telemetry_events (event_name)
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key         TEXT PRIMARY KEY,
-                value       TEXT NOT NULL,
-                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry_events (
+                    id          INTEGER PRIMARY KEY,
+                    event_name  TEXT NOT NULL,
+                    source      TEXT,
+                    value       TEXT,
+                    session_id  TEXT,
+                    timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scheduled_items (
-                id          INTEGER PRIMARY KEY,
-                kind        TEXT NOT NULL,
-                task        TEXT NOT NULL,
-                due_at      TEXT NOT NULL,
-                created_at  TEXT NOT NULL
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_telemetry_event_name
+                ON telemetry_events (event_name)
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_scheduled_due_at
-            ON scheduled_items (due_at)
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS task_memory (
-                id          INTEGER PRIMARY KEY,
-                title       TEXT NOT NULL,
-                notes       TEXT,
-                status      TEXT NOT NULL DEFAULT 'active',
-                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT NOT NULL,
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
 
-        conn.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_task_memory_title
-            ON task_memory (title)
-            """
-        )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS automations (
-                name         TEXT PRIMARY KEY,
-                automation_type TEXT NOT NULL,
-                payload      TEXT NOT NULL,
-                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_run_at  DATETIME
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scheduled_items (
+                    id          INTEGER PRIMARY KEY,
+                    kind        TEXT NOT NULL,
+                    task        TEXT NOT NULL,
+                    due_at      TEXT NOT NULL,
+                    created_at  TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
 
-        conn.commit()
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_scheduled_due_at
+                ON scheduled_items (due_at)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_memory (
+                    id          INTEGER PRIMARY KEY,
+                    title       TEXT NOT NULL,
+                    notes       TEXT,
+                    status      TEXT NOT NULL DEFAULT 'active',
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_task_memory_title
+                ON task_memory (title)
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS automations (
+                    name         TEXT PRIMARY KEY,
+                    automation_type TEXT NOT NULL,
+                    payload      TEXT NOT NULL,
+                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_run_at  DATETIME
+                )
+                """
+            )
+
+            conn.commit()
 
 
 def store_info(category, content):
@@ -166,30 +171,53 @@ def store_info(category, content):
             pass
 
 
+def store_document_chunk(filename, chunk):
+    """Store a document chunk with metadata."""
+    init_db()
+    init_chroma()
+    
+    # Store in ChromaDB
+    if chroma_collection is not None:
+        chunk_id = hashlib.md5(f"{filename}:{chunk}".encode('utf-8')).hexdigest()
+        try:
+            chroma_collection.add(
+                documents=[chunk],
+                metadatas=[{"source": filename, "type": "document"}],
+                ids=[chunk_id]
+            )
+        except Exception:
+            pass
+
 def retrieve_info(keyword):
-    """Return memory contents using semantic search from ChromaDB, falling back to SQLite."""
+    """Return memory contents and document chunks using semantic search."""
     init_db()
     init_chroma()
 
+    results_list = []
     if chroma_collection is not None:
         try:
             results = chroma_collection.query(
                 query_texts=[keyword],
-                n_results=5
+                n_results=10
             )
             if results and results.get('documents') and results['documents'][0]:
-                return results['documents'][0]
+                results_list.extend(results['documents'][0])
         except Exception as e:
             print(f"[Storage] ChromaDB search failed: {e}")
 
-    # Fallback to keyword search
+    # Fallback/Supplemental keyword search in SQLite memories
     with _connect() as conn:
         cur = conn.cursor()
         cur.execute(
             "SELECT content FROM memories WHERE content LIKE ? ORDER BY id DESC LIMIT 5",
             ("%" + keyword + "%",),
         )
-        return [row[0] for row in cur.fetchall()]
+        sqlite_results = [row[0] for row in cur.fetchall()]
+        for res in sqlite_results:
+            if res not in results_list:
+                results_list.append(res)
+                
+    return results_list[:8]
 
 
 def load_recent_memories(limit=20):

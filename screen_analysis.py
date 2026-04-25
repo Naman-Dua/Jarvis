@@ -8,12 +8,27 @@ SCREEN_REQUEST_PHRASES = (
     "what's on my screen",
     "what is on screen",
     "what's on screen",
+    "what is on the screen",
+    "what's on the screen",
     "analyze my screen",
     "analyse my screen",
+    "analyze screen",
+    "analyse screen",
+    "analyze the screen",
+    "analyse the screen",
     "describe my screen",
+    "describe screen",
+    "describe the screen",
     "read my screen",
+    "read screen",
+    "read the screen",
     "look at my screen",
+    "look at screen",
+    "look at the screen",
     "screen analysis",
+    "check my screen",
+    "check screen",
+    "check the screen",
 )
 PREFERRED_VISION_MODELS = (
     "llama3.2-vision:11b",
@@ -38,7 +53,7 @@ def capture_screen():
         screenshot_path = temp.name
 
     with mss.mss() as sct:
-        sct.shot(mon=-1, output=screenshot_path)
+        sct.shot(mon=1, output=screenshot_path)
 
     return screenshot_path
 
@@ -79,16 +94,19 @@ def analyze_screen(query):
                 "Install one like llama3.2-vision and then ask me again."
             )
 
-        response = ollama.generate(
+        response = ollama.chat(
             model=model_name,
-            prompt=(
-                "You are analyzing a Windows desktop screenshot for Kora. "
-                "Answer the user's request directly and briefly. "
-                f"User request: {query}"
-            ),
-            images=[screenshot_path],
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Describe what you see on this screenshot. "
+                    "Then answer the following request: "
+                    f"{query}"
+                ),
+                "images": [screenshot_path],
+            }],
         )
-        return response["response"].strip()
+        return response["message"]["content"].strip()
     except Exception as exc:
         return f"I could not analyze the screen yet. {exc}"
     finally:

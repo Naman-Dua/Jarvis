@@ -2,11 +2,38 @@ import copy
 import re
 
 from actions import execute_action_plan, plan_action_command
+from chat_export import handle_export_command, is_export_request
+from clipboard_ops import handle_clipboard_command, is_clipboard_request
+from code_runner import handle_code_command, is_code_request
+from dictionary_lookup import (
+    handle_dictionary_command,
+    handle_translate_command,
+    is_dictionary_request,
+    is_translate_request,
+)
+from daily_briefing import handle_briefing_command, is_briefing_request
+from file_ops import handle_file_command, is_file_request
+from focus_mode import handle_focus_command, is_focus_request
+from ingest_docs import handle_ingest_command, is_ingest_request
+from media_control import handle_media_command, is_media_request
+from network_tools import handle_network_command, is_network_request
+from news_feed import handle_news_command, is_news_request
+from ocr import handle_ocr_command, is_ocr_request
+from personas import handle_persona_command, is_persona_request
+from plugin_loader import handle_plugin_command, is_plugin_request, try_plugin_handle
+from process_mgmt import handle_process_command, is_process_request
 from screen_analysis import analyze_screen, is_screen_request
 from search_engine import extract_search_query, format_search_response, is_search_request, search_online
 from skills import describe_skills, is_skill_list_request, parse_skill_command
 from storage import load_automation, load_automations, mark_automation_ran, save_automation
+from system_info import handle_system_command, is_system_request
+from timer_tools import handle_stopwatch_command, is_stopwatch_request
 from task_memory import handle_task_memory_command
+from themes import handle_theme_command, is_theme_request
+from url_summarizer import handle_url_summarize_command, is_url_summarize_request
+from weather import handle_weather_command, is_weather_request
+from web_monitor import handle_web_monitor_command, is_web_monitor_request
+from window_mgmt import handle_window_command, is_window_request
 
 APPROVE_PATTERN = re.compile(r"^(?:approve|confirm|yes|do it|go ahead|proceed)$", re.IGNORECASE)
 REJECT_PATTERN = re.compile(r"^(?:reject|cancel that|no|never mind|dont do that|don't do that)$", re.IGNORECASE)
@@ -23,12 +50,15 @@ LIST_AUTOMATIONS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 STATUS_PATTERN = re.compile(r"^(?:operator status|status report)$", re.IGNORECASE)
+REPEAT_PATTERN = re.compile(r"^(?:do that again|repeat that|again|run that again|same thing)$", re.IGNORECASE)
 
 
 class OperatorState:
     def __init__(self):
         self.pending_approval = None
         self.last_workflow = None
+        self.last_action = None
+        self.last_query = None
 
 
 def _should_require_confirmation(plan, settings):
@@ -152,10 +182,25 @@ def _handle_automation_commands(query, state):
     return None
 
 
-def handle_operator_command(query, settings, state):
+def _handle_contextual_repeat(query, state, settings):
+    normalized = " ".join(str(query).strip().split())
+    if not REPEAT_PATTERN.match(normalized):
+        return None
+    if not state.last_workflow:
+        return {"action": "repeat", "reply": "There is nothing to repeat yet."}
+    reply = _execute_workflow(state.last_workflow, state, settings)
+    return {"action": "repeat", "reply": reply}
+
+
+def handle_operator_command(query, settings, state, reminder_manager=None):
     approval_reply = _handle_approval(query, state, settings)
     if approval_reply:
         return approval_reply
+
+    # Contextual follow-ups
+    repeat_reply = _handle_contextual_repeat(query, state, settings)
+    if repeat_reply:
+        return repeat_reply
 
     automation_reply = _handle_automation_commands(query, state)
     if automation_reply:
@@ -172,14 +217,158 @@ def handle_operator_command(query, settings, state):
         _set_last_workflow(state, workflow)
         return {"action": task_reply["action"], "reply": task_reply["reply"]}
 
+    # Personas
+    if is_persona_request(query):
+        result = handle_persona_command(query)
+        if result:
+            return result
+
+    # Themes
+    if is_theme_request(query):
+        result = handle_theme_command(query)
+        if result:
+            return result
+
+    # Plugins
+    if is_plugin_request(query):
+        result = handle_plugin_command(query)
+        if result:
+            return result
+
+    plugin_result = try_plugin_handle(query)
+    if plugin_result:
+        return plugin_result
+
     if is_skill_list_request(query):
         return {"action": "list_skills", "reply": describe_skills()}
 
+    # Clipboard
+    if is_clipboard_request(query):
+        result = handle_clipboard_command(query)
+        if result:
+            return result
+
+    # File operations
+    if is_file_request(query):
+        result = handle_file_command(query)
+        if result:
+            return result
+
+    # Document ingestion (RAG)
+    if is_ingest_request(query):
+        result = handle_ingest_command(query)
+        if result:
+            return result
+
+    # Daily Briefing
+    if is_briefing_request(query) and reminder_manager:
+        result = handle_briefing_command(query, reminder_manager)
+        if result:
+            return result
+
+    # Focus Mode
+    if is_focus_request(query):
+        result = handle_focus_command(query)
+        if result:
+            return result
+
+    # Media control
+    if is_media_request(query):
+        result = handle_media_command(query)
+        if result:
+            return result
+
+    # Window management
+    if is_window_request(query):
+        result = handle_window_command(query)
+        if result:
+            return result
+
+    # Weather
+    if is_weather_request(query):
+        result = handle_weather_command(query)
+        if result:
+            return result
+
+    # Dictionary
+    if is_dictionary_request(query):
+        result = handle_dictionary_command(query)
+        if result:
+            return result
+
+    # Translation
+    if is_translate_request(query):
+        result = handle_translate_command(query)
+        if result:
+            return result
+
+    # News
+    if is_news_request(query):
+        result = handle_news_command(query)
+        if result:
+            return result
+
+    # URL summarizer
+    if is_url_summarize_request(query):
+        result = handle_url_summarize_command(query)
+        if result:
+            return result
+
+    # Chat export
+    if is_export_request(query):
+        result = handle_export_command(query)
+        if result:
+            return result
+
+    # Code execution
+    if is_code_request(query):
+        result = handle_code_command(query)
+        if result:
+            return result
+
+    # System status
+    if is_system_request(query):
+        result = handle_system_command(query)
+        if result:
+            return result
+
+    # Process management
+    if is_process_request(query):
+        result = handle_process_command(query)
+        if result:
+            return result
+
+    # Network tools
+    if is_network_request(query):
+        result = handle_network_command(query)
+        if result:
+            return result
+
+    # Stopwatch
+    if is_stopwatch_request(query):
+        result = handle_stopwatch_command(query)
+        if result:
+            return result
+
+    # Web monitor
+    if is_web_monitor_request(query):
+        result = handle_web_monitor_command(query)
+        if result:
+            return result
+
+    # Search
     if is_search_request(query):
         workflow = {"type": "search", "payload": {"query": extract_search_query(query)}}
         reply = _execute_workflow(workflow, state, settings)
         return {"action": "search", "reply": reply}
 
+    # OCR
+    if is_ocr_request(query):
+        result = handle_ocr_command(query)
+        if result:
+            return result
+
+    # Screen analysis
     if is_screen_request(query):
         workflow = {"type": "screen", "payload": {"query": query}}
         reply = _execute_workflow(workflow, state, settings)

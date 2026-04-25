@@ -19,7 +19,6 @@ from tasks import ReminderManager, check_for_tasks
 from voice import speak
 from mode_select import ask_mode
 from storage import log_telemetry, load_telemetry_summary
-
 # Set by the startup dialog — "voice", "text", or "both"
 INPUT_MODE = "both"   # overwritten at launch
 
@@ -248,6 +247,10 @@ def voice_listener_loop(ui):
     """
     ensure_voice_stack_loaded()
     while True:
+        # Wait if Kora is busy processing or speaking
+        while kora_busy.is_set():
+            time.sleep(0.1)
+
         try:
             if sleep_mode.is_set():
                 ui.status_signal.emit(SLEEPING_STATUS)
@@ -261,6 +264,7 @@ def voice_listener_loop(ui):
                 wake_notice_pending.set()
                 if wake_cmd:
                     command_queue.put({"text": wake_cmd, "source": "voice"})
+                    time.sleep(0.5)
                 continue
 
             if not ENABLE_WAKE_WORD:
@@ -268,6 +272,7 @@ def voice_listener_loop(ui):
                 heard = listen()
                 if heard:
                     command_queue.put({"text": heard, "source": "voice"})
+                    time.sleep(0.5)
                 continue
 
             # Wake-word mode
@@ -280,6 +285,7 @@ def voice_listener_loop(ui):
                 continue
             if wake_cmd:
                 command_queue.put({"text": wake_cmd, "source": "voice"})
+                time.sleep(0.5)
             else:
                 ui.log_signal.emit("SYSTEM", "Wake word detected.")
                 ui.status_signal.emit(COMMAND_STATUS)
@@ -287,6 +293,7 @@ def voice_listener_loop(ui):
                 follow_up = listen()
                 if follow_up:
                     command_queue.put({"text": follow_up, "source": "voice"})
+                    time.sleep(0.5)
 
         except Exception:
             print(f"[Voice listener error]: {traceback.format_exc()}")
@@ -370,7 +377,11 @@ def kora_logic(ui):
         ensure_voice_stack_loaded()
         ui.status_signal.emit("CALIBRATING MIC...")
         ui.log_signal.emit("SYSTEM", "Calibrating microphone — stay silent for 2 seconds...")
-        calibrate_microphone(duration=2.0)
+        kora_busy.set()
+        try:
+            calibrate_microphone(duration=2.0)
+        finally:
+            kora_busy.clear()
         ui.log_signal.emit("SYSTEM", "Microphone calibrated.")
 
     mode_msg = {
@@ -448,6 +459,15 @@ def kora_logic(ui):
 
             # ── Recalibrate ───────────────────────────────────────────────────
             if command_matches(norm_cmd, RECALIBRATE_COMMANDS):
+                if INPUT_MODE == "text" or calibrate_microphone is None:
+                    r = "Microphone recalibration is not available in text-only mode."
+                    ui.log_signal.emit("KORA", r)
+                    if should_speak_response(source):
+                        speak(r)
+                    ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                    ui.re_enable_input()
+                    kora_busy.clear()
+                    continue
                 r = "Recalibrating microphone. Please stay silent for 2 seconds."
                 ui.log_signal.emit("KORA", r)
                 speak(r)
@@ -509,22 +529,24 @@ def kora_logic(ui):
             if settings_reply:
                 push_telemetry(ui, "settings_changed", source=source, value=settings_reply[:140])
                 ui.log_signal.emit("KORA", settings_reply)
-                ui.status_signal.emit("SPEAKING...")
-                speak(settings_reply)
+                if should_speak_response(source):
+                    ui.status_signal.emit("SPEAKING...")
+                    speak(settings_reply)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
                 ui.re_enable_input()
                 kora_busy.clear()
                 continue
 
             # ── Operator (Actions, Screen, Search, Skills, Automations) ───────
-            operator_res = handle_operator_command(query, APP_SETTINGS, operator_state)
+            operator_res = handle_operator_command(query, APP_SETTINGS, operator_state, reminder_manager)
             if operator_res:
                 action_name = operator_res.get("action", "unknown")
                 reply_text = operator_res.get("reply", "")
                 push_telemetry(ui, f"operator_{action_name}", source=source, value=reply_text[:140])
                 ui.log_signal.emit("KORA", reply_text)
-                ui.status_signal.emit("SPEAKING...")
-                speak(reply_text)
+                if should_speak_response(source):
+                    ui.status_signal.emit("SPEAKING...")
+                    speak(reply_text)
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
                 ui.re_enable_input()
                 kora_busy.clear()
@@ -542,7 +564,9 @@ def kora_logic(ui):
                         )
                 push_telemetry(ui, "task_event", source=source, value=task.get("action", "unknown"))
                 ui.log_signal.emit("KORA", task["reply"])
-                speak(task["reply"])
+                if should_speak_response(source):
+                    ui.status_signal.emit("SPEAKING...")
+                    speak(task["reply"])
                 if task.get("action") == "schedule" and task.get("item"):
                     brain.learn(
                         f"{task['item'].kind.upper()} scheduled: "
@@ -553,15 +577,32 @@ def kora_logic(ui):
                 kora_busy.clear()
                 continue
 
+            # ── Conversation summarizer ───────────────────────────────────────
+            from conversation_summarizer import is_summarize_request, summarize_conversation
+            if is_summarize_request(query):
+                res = summarize_conversation(brain.conversation_history, brain.model_name)
+                push_telemetry(ui, "conversation_summary", source=source, value=res[:140])
+                ui.log_signal.emit("KORA", res)
+                if should_speak_response(source):
+                    ui.status_signal.emit("SPEAKING...")
+                    speak(res)
+                ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
+                ui.re_enable_input()
+                kora_busy.clear()
+                continue
+
             # ── General reply (LLM) ───────────────────────────────────────────
-            brain.learn(query)
             res = brain.generate_reply(query)
+            
+            # Run fact extraction in background after the reply is ready
+            threading.Thread(
+                target=brain.learn, args=(query,), daemon=True
+            ).start()
             push_telemetry(ui, "llm_reply", source=source, value=res[:140])
             ui.log_signal.emit("KORA", res)
-            ui.status_signal.emit("SPEAKING...")
 
-            # Speak only for voice input or voice-capable modes
-            if source == "voice" or INPUT_MODE == "voice":
+            if should_speak_response(source):
+                ui.status_signal.emit("SPEAKING...")
                 speak(res)
 
             ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
