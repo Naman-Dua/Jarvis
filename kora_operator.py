@@ -34,6 +34,8 @@ from url_summarizer import handle_url_summarize_command, is_url_summarize_reques
 from weather import handle_weather_command, is_weather_request
 from web_monitor import handle_web_monitor_command, is_web_monitor_request
 from window_mgmt import handle_window_command, is_window_request
+from plugin_architect import handle_architect_command, is_architect_request
+from mission_control import MissionControl
 
 APPROVE_PATTERN = re.compile(r"^(?:approve|confirm|yes|do it|go ahead|proceed)$", re.IGNORECASE)
 REJECT_PATTERN = re.compile(r"^(?:reject|cancel that|no|never mind|dont do that|don't do that)$", re.IGNORECASE)
@@ -59,6 +61,7 @@ class OperatorState:
         self.last_workflow = None
         self.last_action = None
         self.last_query = None
+        self.mission_control = MissionControl()
 
 
 def _should_require_confirmation(plan, settings):
@@ -226,6 +229,18 @@ def handle_operator_command(query, settings, state, reminder_manager=None):
     # Themes
     if is_theme_request(query):
         result = handle_theme_command(query)
+        if result:
+            return result
+
+    # Plugin Architect
+    if is_architect_request(query):
+        result = handle_architect_command(query)
+        if result:
+            return result
+
+    # Mission Control
+    if state.mission_control.is_mission_request(query):
+        result = state.mission_control.execute_mission(query)
         if result:
             return result
 

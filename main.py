@@ -19,6 +19,8 @@ from tasks import ReminderManager, check_for_tasks
 from voice import speak
 from mode_select import ask_mode
 from storage import log_telemetry, load_telemetry_summary
+from live_eye import LiveEye
+from knowledge_watcher import KnowledgeWatcher
 # Set by the startup dialog — "voice", "text", or "both"
 INPUT_MODE = "both"   # overwritten at launch
 
@@ -205,6 +207,16 @@ def handle_settings_command(query):
         save_settings({"require_action_confirmation": False})
         refresh_runtime_settings()
         return "Safety confirmations are off."
+
+    if normalized in {"live eye on", "turn live eye on", "enable vision monitoring"}:
+        save_settings({"enable_live_eye": True})
+        refresh_runtime_settings()
+        return "Live Eye proactive vision is now active."
+
+    if normalized in {"live eye off", "turn live eye off", "disable vision monitoring"}:
+        save_settings({"enable_live_eye": False})
+        refresh_runtime_settings()
+        return "Live Eye is now inactive."
 
     model_match = re.match(r"^(?:set model to|use model)\s+(.+)$", normalized)
     if model_match:
@@ -653,5 +665,13 @@ if __name__ == "__main__":
         target=reminder_loop, args=(hud,), daemon=True
     )
     reminder_thread.start()
+
+    # Start proactive vision
+    live_eye = LiveEye(hud.log_signal.emit, speak)
+    live_eye.start()
+
+    # Start knowledge watcher
+    knowledge_watcher = KnowledgeWatcher(hud.log_signal.emit)
+    knowledge_watcher.start()
 
     sys.exit(app.exec())

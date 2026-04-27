@@ -23,6 +23,17 @@ def _safe_path(path_str):
     return os.path.abspath(expanded)
 
 
+def write_to_file(path_str, content):
+    path = _safe_path(path_str)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return True
+    except Exception:
+        return False
+
+
 def is_file_request(text):
     normalized = " ".join(str(text).strip().split())
     return any(p.match(normalized) for p in FILE_PATTERNS)
@@ -42,6 +53,15 @@ def handle_file_command(text):
             return {"action": "file_create", "reply": f"Created file: {path}"}
         except Exception as e:
             return {"action": "file_create", "reply": f"Could not create file: {e}"}
+
+    # Write content (Internal/Direct)
+    m = re.match(r"^write (?:text |content )?\"(.+?)\" to (?:the )?file (.+)$", normalized, re.I)
+    if m:
+        content = m.group(1)
+        path = m.group(2)
+        if write_to_file(path, content):
+            return {"action": "file_write", "reply": f"Written content to {path}"}
+        return {"action": "file_write", "reply": f"Failed to write to {path}"}
 
     # Delete
     m = re.match(r"^(?:delete|remove) (?:the )?file (.+)$", normalized, re.I)
