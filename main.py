@@ -33,8 +33,15 @@ from tasks import ReminderManager, check_for_tasks
 from voice import speak
 from mode_select import ask_mode
 from storage import log_telemetry, load_telemetry_summary
-from live_eye import LiveEye
-from knowledge_watcher import KnowledgeWatcher
+try:
+    from live_eye import LiveEye
+except ImportError:
+    LiveEye = None
+
+try:
+    from knowledge_watcher import KnowledgeWatcher
+except ImportError:
+    KnowledgeWatcher = None
 # Set by the startup dialog — "voice", "text", or "both"
 INPUT_MODE = "both"   # overwritten at launch
 
@@ -698,11 +705,19 @@ if __name__ == "__main__":
     reminder_thread.start()
 
     # Start proactive vision
-    live_eye = LiveEye(hud.log_signal.emit, speak, command_queue=command_queue)
-    live_eye.start()
+    if LiveEye:
+        try:
+            live_eye = LiveEye(hud.log_signal.emit, speak, command_queue=command_queue)
+            live_eye.start()
+        except Exception as e:
+            hud.log_signal.emit("SYSTEM", f"Vision System (LiveEye) initialization: {e}")
 
     # Start knowledge watcher
-    knowledge_watcher = KnowledgeWatcher(hud.log_signal.emit)
-    knowledge_watcher.start()
+    if KnowledgeWatcher:
+        try:
+            knowledge_watcher = KnowledgeWatcher(hud.log_signal.emit)
+            knowledge_watcher.start()
+        except Exception as e:
+            hud.log_signal.emit("SYSTEM", f"Knowledge Watcher initialization: {e}")
 
     sys.exit(app.exec())

@@ -3,22 +3,27 @@ PyQt6
 ollama
 requests
 chromadb
-sqlite3
+fastapi
+uvicorn
+mss
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation
+opentelemetry-instrumentation-fastapi
 
 # Voice and Audio
 SpeechRecognition
-PyAudio
+sounddevice
+soundfile
+numpy
+faster-whisper
 pyttsx3
 edge-tts
 
 # Automation and OS Control
 pyautogui
 psutil
-Pillow
 pywin32
 
-# Media and Hardware
-winsound
-
-# Vision
-moondream
+# Vision (Fully Functional on 3.14 via mss)
+# No Pillow needed!
