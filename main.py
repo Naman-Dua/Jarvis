@@ -1,7 +1,21 @@
+import os
+import sys
+import ctypes
+
+# Force Windows DPI Awareness at the hardware level
+try:
+    # 1 = Process_System_DPI_Aware
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
+
+# Secondary safety flags and log hushing
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
+
 import threading
 import queue
-import sys
-import os
 import re
 import time
 import traceback
@@ -18,6 +32,7 @@ from settings import load_settings, save_settings
 from tasks import ReminderManager, check_for_tasks
 from voice import speak
 from mode_select import ask_mode
+from telegram_bridge import TelegramBridge
 from storage import log_telemetry, load_telemetry_summary
 from live_eye import LiveEye
 from knowledge_watcher import KnowledgeWatcher
@@ -267,7 +282,7 @@ def voice_listener_loop(ui):
             if sleep_mode.is_set():
                 ui.status_signal.emit(SLEEPING_STATUS)
                 heard = listen()
-                if not heard or kora_busy.is_set(): # Extra safety check after listen() returns
+                if not heard:
                     continue
                 wake_cmd = extract_wake_command(heard)
                 if wake_cmd is None:
@@ -282,7 +297,7 @@ def voice_listener_loop(ui):
             if not ENABLE_WAKE_WORD:
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
                 heard = listen()
-                if heard and not kora_busy.is_set():
+                if heard:
                     command_queue.put({"text": heard, "source": "voice"})
                     time.sleep(0.5)
                 continue
@@ -290,7 +305,7 @@ def voice_listener_loop(ui):
             # Wake-word mode
             ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
             heard = listen()
-            if not heard or kora_busy.is_set():
+            if not heard:
                 continue
             wake_cmd = extract_wake_command(heard)
             if wake_cmd is None:
@@ -303,7 +318,7 @@ def voice_listener_loop(ui):
                 ui.status_signal.emit(COMMAND_STATUS)
                 speak("Yes?")
                 follow_up = listen()
-                if follow_up and not kora_busy.is_set():
+                if follow_up:
                     command_queue.put({"text": follow_up, "source": "voice"})
                     time.sleep(0.5)
 
@@ -604,18 +619,35 @@ def kora_logic(ui):
                 continue
 
             # ── General reply (LLM) ───────────────────────────────────────────
-            res = brain.generate_reply(query)
+            brain_res = brain.generate_reply(query)
+            reply_text = brain_res["text"]
+            mood = brain_res["mood"]
+            auto_intent = brain_res.get("intent")
             
+            # Proactive scheduling
+            if auto_intent and auto_intent.get("action") == "schedule":
+                try:
+                    task_str = auto_intent.get("task", "Meeting")
+                    time_str = auto_intent.get("time", "")
+                    if time_str and reminder_manager:
+                        reminder_manager.add_reminder("reminder", task_str, time_str)
+                        ui.log_signal.emit("SYSTEM", f"Proactively scheduled: {task_str} at {time_str}")
+                        push_telemetry(ui, "proactive_schedule", source="brain", value=task_str)
+                except Exception as e:
+                    print(f"[PROACTIVE] Scheduling failed: {e}")
+
             # Run fact extraction in background after the reply is ready
             threading.Thread(
                 target=brain.learn, args=(query,), daemon=True
             ).start()
-            push_telemetry(ui, "llm_reply", source=source, value=res[:140])
-            ui.log_signal.emit("KORA", res)
+
+            ui.mood_signal.emit(mood)
+            push_telemetry(ui, "llm_reply", source=source, value=reply_text[:140])
+            ui.log_signal.emit("KORA", reply_text)
 
             if should_speak_response(source):
                 ui.status_signal.emit("SPEAKING...")
-                speak(res)
+                speak(reply_text)
 
             ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
             ui.re_enable_input()
@@ -667,22 +699,15 @@ if __name__ == "__main__":
     reminder_thread.start()
 
     # Start proactive vision
-<<<<<<< Updated upstream
-    live_eye = LiveEye(hud.log_signal.emit, speak)
-=======
-    live_eye = LiveEye(hud.log_signal.emit, speak, command_queue=command_queue, kora_busy=kora_busy)
->>>>>>> Stashed changes
+    live_eye = LiveEye(hud.log_signal.emit, speak, command_queue=command_queue)
     live_eye.start()
 
     # Start knowledge watcher
     knowledge_watcher = KnowledgeWatcher(hud.log_signal.emit)
     knowledge_watcher.start()
 
-<<<<<<< Updated upstream
-=======
     # Start Telegram Bridge
-    tg_bridge = TelegramBridge(hud.log_signal.emit, speak, operator_state)
+    tg_bridge = TelegramBridge(hud.log_signal.emit, speak)
     tg_bridge.start()
 
->>>>>>> Stashed changes
     sys.exit(app.exec())
