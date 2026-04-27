@@ -6,10 +6,19 @@ from screen_analysis import capture_screen, get_available_vision_model
 from settings import get_setting
 
 class LiveEye(threading.Thread):
+<<<<<<< Updated upstream
     def __init__(self, ui_log_callback, speak_callback):
         super().__init__(daemon=True)
         self.ui_log = ui_log_callback
         self.speak = speak_callback
+=======
+    def __init__(self, ui_log_callback, speak_callback, command_queue=None, kora_busy=None):
+        super().__init__(daemon=True)
+        self.ui_log = ui_log_callback
+        self.speak = speak_callback
+        self.command_queue = command_queue
+        self.kora_busy = kora_busy
+>>>>>>> Stashed changes
         self.running = False
         self.interval = 60 # seconds
         self.last_observation = ""
@@ -50,8 +59,33 @@ Do not be annoying. Only speak up for high-value insights.
             observation = response["message"]["content"].strip()
             
             if observation.upper() != "CLEAR" and observation != self.last_observation:
+<<<<<<< Updated upstream
                 self.ui_log("KORA (PROACTIVE)", observation)
                 self.speak(observation)
+=======
+                # Extract parts
+                parts = observation.split("\n")
+                summary = observation
+                for p in parts:
+                    if p.startswith("PROPOSAL:"):
+                        summary = p.replace("PROPOSAL:", "").strip()
+                    if p.startswith("COMMAND:") and self.command_queue:
+                        # Optional: We could automatically queue it if highly confident, 
+                        # but for now we just log it as a suggestion.
+                        pass
+
+                # Wait for system to be idle before interrupting
+                if self.kora_busy:
+                    while self.kora_busy.is_set():
+                        time.sleep(0.5)
+
+                self.ui_log("KORA (PROACTIVE)", summary)
+                # Set busy flag manually if we are taking the 'turn'
+                if self.kora_busy: self.kora_busy.set()
+                self.speak(f"I noticed something. {summary}")
+                if self.kora_busy: self.kora_busy.clear()
+                
+>>>>>>> Stashed changes
                 self.last_observation = observation
                 
         except Exception as e:

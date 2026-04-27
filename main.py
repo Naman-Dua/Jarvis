@@ -267,7 +267,7 @@ def voice_listener_loop(ui):
             if sleep_mode.is_set():
                 ui.status_signal.emit(SLEEPING_STATUS)
                 heard = listen()
-                if not heard:
+                if not heard or kora_busy.is_set(): # Extra safety check after listen() returns
                     continue
                 wake_cmd = extract_wake_command(heard)
                 if wake_cmd is None:
@@ -282,7 +282,7 @@ def voice_listener_loop(ui):
             if not ENABLE_WAKE_WORD:
                 ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
                 heard = listen()
-                if heard:
+                if heard and not kora_busy.is_set():
                     command_queue.put({"text": heard, "source": "voice"})
                     time.sleep(0.5)
                 continue
@@ -290,7 +290,7 @@ def voice_listener_loop(ui):
             # Wake-word mode
             ui.status_signal.emit(DEFAULT_LISTENING_STATUS)
             heard = listen()
-            if not heard:
+            if not heard or kora_busy.is_set():
                 continue
             wake_cmd = extract_wake_command(heard)
             if wake_cmd is None:
@@ -303,7 +303,7 @@ def voice_listener_loop(ui):
                 ui.status_signal.emit(COMMAND_STATUS)
                 speak("Yes?")
                 follow_up = listen()
-                if follow_up:
+                if follow_up and not kora_busy.is_set():
                     command_queue.put({"text": follow_up, "source": "voice"})
                     time.sleep(0.5)
 
@@ -667,11 +667,22 @@ if __name__ == "__main__":
     reminder_thread.start()
 
     # Start proactive vision
+<<<<<<< Updated upstream
     live_eye = LiveEye(hud.log_signal.emit, speak)
+=======
+    live_eye = LiveEye(hud.log_signal.emit, speak, command_queue=command_queue, kora_busy=kora_busy)
+>>>>>>> Stashed changes
     live_eye.start()
 
     # Start knowledge watcher
     knowledge_watcher = KnowledgeWatcher(hud.log_signal.emit)
     knowledge_watcher.start()
 
+<<<<<<< Updated upstream
+=======
+    # Start Telegram Bridge
+    tg_bridge = TelegramBridge(hud.log_signal.emit, speak, operator_state)
+    tg_bridge.start()
+
+>>>>>>> Stashed changes
     sys.exit(app.exec())

@@ -82,6 +82,31 @@ class KoraBrain:
                 model=self.model_name,
                 messages=llm_messages,
             )
+<<<<<<< Updated upstream
+=======
+            m_res = ollama.chat(model=self.model_name, messages=[{"role": "user", "content": intent_prompt}])
+            raw_m = m_res["message"]["content"].strip()
+            
+            # Parse mood and intent
+            mood = "IDLE"
+            auto_intent = None
+            if "|" in raw_m:
+                intent_part, mood_part = raw_m.split("|", 1)
+                mood = mood_part.strip().upper()
+                if "{" in intent_part:
+                    try:
+                        # Robust JSON extraction: Find the first '{' and the last '}'
+                        import json
+                        match = re.search(r'\{.*\}', intent_part, re.DOTALL)
+                        if match:
+                            auto_intent = json.loads(match.group(0))
+                    except: pass
+            else:
+                mood = raw_m.upper()
+
+            if mood not in ["POSITIVE", "NEGATIVE", "URGENT", "IDLE"]:
+                mood = "IDLE"
+>>>>>>> Stashed changes
 
             reply = response["message"]["content"].strip()
             self.conversation_history.append({"role": "assistant", "content": reply})
