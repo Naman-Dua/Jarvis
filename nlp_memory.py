@@ -2,6 +2,50 @@ import ollama
 import json
 from intelligent_cache import cache_llm_response
 
+
+def _heuristic_facts(text):
+    """Small offline fallback for obvious personal facts."""
+    import re
+
+    source = " ".join(str(text).strip().split())
+    if not source or len(source) < 6:
+        return []
+
+    patterns = [
+        (r"\bmy name is\s+([^,.!?]+)", "User's name is {}"),
+        (r"\bi am\s+(\d{1,3})\s*(?:years old|yo)?\b", "User is {} years old"),
+        (r"\bi live in\s+([^,.!?]+)", "User lives in {}"),
+        (r"\bi work as\s+(?:a |an )?([^,.!?]+)", "User works as {}"),
+        (r"\bi am\s+(?:a |an )([^,.!?]+)", "User is a {}"),
+        (r"\bi like\s+([^,.!?]+)", "User likes {}"),
+        (r"\bi love\s+([^,.!?]+)", "User loves {}"),
+        (r"\bi hate\s+([^,.!?]+)", "User dislikes {}"),
+        (r"\bi prefer\s+([^,.!?]+)", "User prefers {}"),
+        (r"\bmy favorite ([^,.!?]+?) is\s+([^,.!?]+)", "User's favorite {} is {}"),
+    ]
+
+    facts = []
+    lowered = source.lower()
+    for pattern, template in patterns:
+        for match in re.finditer(pattern, lowered, re.IGNORECASE):
+            groups = [g.strip(" .") for g in match.groups()]
+            if not all(groups):
+                continue
+            if len(groups) == 1:
+                facts.append(template.format(groups[0]))
+            else:
+                facts.append(template.format(*groups))
+
+    cleaned = []
+    seen = set()
+    for fact in facts:
+        fact = fact[:180].strip()
+        key = fact.lower()
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(fact)
+    return cleaned[:5]
+
 @cache_llm_response(ttl=86400) # Cache fact extractions for 24 hours
 def extract_facts(text, model_name="llama3.1:8b"):
     """
@@ -31,6 +75,7 @@ Examples:
 User text: {text}
 Output JSON list ONLY:
 """
+    fallback = _heuristic_facts(text)
     try:
         response = ollama.generate(model=model_name, prompt=prompt)
         content = response['response'].strip()
@@ -43,14 +88,22 @@ Output JSON list ONLY:
             try:
                 facts = json.loads(json_str)
                 if isinstance(facts, list):
-                    return [str(f) for f in facts]
+                    merged = [str(f) for f in facts] + fallback
+                    deduped = []
+                    seen = set()
+                    for fact in merged:
+                        key = fact.lower().strip()
+                        if key and key not in seen:
+                            seen.add(key)
+                            deduped.append(fact)
+                    return deduped[:8]
             except json.JSONDecodeError:
                 pass
         
-        return []
+        return fallback
     except Exception as e:
         print(f"[LLM Memory Extractor Error] {e}")
-        return []
+        return fallback
 
 if __name__ == "__main__":
     # Test cases

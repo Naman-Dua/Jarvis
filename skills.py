@@ -21,6 +21,26 @@ DEFAULT_SKILLS = {
         "description": "Read or write text to the system clipboard.",
         "example": "read clipboard / copy to clipboard hello world",
     },
+    "memory": {
+        "description": "Show, search, save, or forget personal facts Kora has learned.",
+        "example": "what do you remember about me / remember that I prefer short answers",
+    },
+    "entertainment": {
+        "description": "Game and entertainment mode with dice, coin flips, jokes, and activity picks.",
+        "example": "game mode on / roll dice / pick something fun",
+    },
+    "auto_debug": {
+        "description": "Run local health checks and inspect the latest crash signal.",
+        "example": "auto-debug / auto-debug mode on",
+    },
+    "knowledge_packs": {
+        "description": "List and ingest offline files from the knowledge folder.",
+        "example": "list offline knowledge packs / ingest all knowledge packs",
+    },
+    "model_routing": {
+        "description": "Route simple and deep requests to different local models.",
+        "example": "model routing on / set fast model to phi3:latest",
+    },
     "files": {
         "description": "Create, move, rename, delete, or list files.",
         "example": "create file notes.txt / list files in Desktop",

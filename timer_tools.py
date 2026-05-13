@@ -1,5 +1,7 @@
 import time
 import re
+import threading
+import winsound
 
 class Stopwatch:
     def __init__(self):
@@ -61,24 +63,99 @@ class Stopwatch:
         else:
             return f"{s:.2f} seconds"
 
-# Global instance for the operator
+def beep_alarm(times=3):
+    for _ in range(times):
+        winsound.Beep(1000, 500)
+        time.sleep(0.1)
+
+class TimerManager:
+    def __init__(self):
+        self.timers = []
+        
+    def set_timer(self, seconds, name="Timer"):
+        def alarm():
+            beep_alarm(3)
+        t = threading.Timer(seconds, alarm)
+        t.daemon = True
+        t.start()
+        self.timers.append(t)
+        return f"{name} set for {seconds} seconds."
+
+    def start_pomodoro(self):
+        def pomodoro_end():
+            beep_alarm(5)
+            # automatically start 5 min break
+            t2 = threading.Timer(5 * 60, break_end)
+            t2.daemon = True
+            t2.start()
+            self.timers.append(t2)
+            
+        def break_end():
+            beep_alarm(3)
+            
+        t1 = threading.Timer(25 * 60, pomodoro_end)
+        t1.daemon = True
+        t1.start()
+        self.timers.append(t1)
+        return "Pomodoro session started: 25 minutes of focus."
+
+    def set_reminder(self, task, seconds):
+        def reminder():
+            beep_alarm(2)
+        t = threading.Timer(seconds, reminder)
+        t.daemon = True
+        t.start()
+        self.timers.append(t)
+        return f"Reminder set for: {task}."
+
+# Global instances
 stopwatch_instance = Stopwatch()
+timer_manager = TimerManager()
 
 def is_stopwatch_request(text):
     patterns = [
         r"(?:start|stop|reset|lap|status) (?:the )?stopwatch",
         r"how long has it been",
         r"stopwatch (?:start|stop|reset|lap|status)",
+        r"set (?:a )?timer for (\d+) (seconds?|minutes?|hours?)",
+        r"(?:start|begin) (?:a )?pomodoro",
+        r"remind me to (.+) in (\d+) (seconds?|minutes?|hours?)",
     ]
     normalized = text.lower().strip()
     return any(re.search(p, normalized) for p in patterns)
 
+def parse_time_to_seconds(amount, unit):
+    amount = int(amount)
+    if "hour" in unit:
+        return amount * 3600
+    if "minute" in unit:
+        return amount * 60
+    return amount
+
 def handle_stopwatch_command(text):
     normalized = text.lower().strip()
     
-    if "start" in normalized:
+    # Reminders
+    m = re.search(r"remind me to (.+) in (\d+) (seconds?|minutes?|hours?)", normalized)
+    if m:
+        task = m.group(1).strip()
+        secs = parse_time_to_seconds(m.group(2), m.group(3))
+        return {"action": "timer_reminder", "reply": timer_manager.set_reminder(task, secs)}
+        
+    # Timers
+    m = re.search(r"set (?:a )?timer for (\d+) (seconds?|minutes?|hours?)", normalized)
+    if m:
+        secs = parse_time_to_seconds(m.group(1), m.group(2))
+        return {"action": "timer_set", "reply": timer_manager.set_timer(secs)}
+        
+    # Pomodoro
+    if "pomodoro" in normalized:
+        return {"action": "timer_pomodoro", "reply": timer_manager.start_pomodoro()}
+    
+    # Stopwatch
+    if "start" in normalized and "stopwatch" in normalized:
         return {"action": "stopwatch_start", "reply": stopwatch_instance.start()}
-    if "stop" in normalized:
+    if "stop" in normalized and "stopwatch" in normalized:
         return {"action": "stopwatch_stop", "reply": stopwatch_instance.stop()}
     if "lap" in normalized:
         return {"action": "stopwatch_lap", "reply": stopwatch_instance.lap()}

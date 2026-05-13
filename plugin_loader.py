@@ -28,6 +28,9 @@ def load_plugins():
             spec = importlib.util.spec_from_file_location(f"plugins.{name}", path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
+            if not callable(getattr(mod, "matches", None)) or not callable(getattr(mod, "handle_command", None)):
+                print(f"[PLUGIN] Skipped {name}: missing matches() or handle_command().")
+                continue
             _loaded_plugins[name] = mod
             print(f"[PLUGIN] Loaded: {name}")
         except Exception as e:

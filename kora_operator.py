@@ -2,6 +2,7 @@ import copy
 import re
 
 from actions import execute_action_plan, plan_action_command
+from auto_debug import handle_auto_debug_command, is_auto_debug_request
 from chat_export import handle_export_command, is_export_request
 from clipboard_ops import handle_clipboard_command, is_clipboard_request
 from code_runner import handle_code_command, is_code_request
@@ -16,6 +17,7 @@ from file_ops import handle_file_command, is_file_request
 from focus_mode import handle_focus_command, is_focus_request
 from ingest_docs import handle_ingest_command, is_ingest_request
 from media_control import handle_media_command, is_media_request
+from memory_tools import handle_memory_command, is_memory_request
 from network_tools import handle_network_command, is_network_request
 from news_feed import handle_news_command, is_news_request
 from ocr import handle_ocr_command, is_ocr_request
@@ -44,6 +46,8 @@ from energy_monitor import handle_energy_command, is_energy_request
 from error_recovery import handle_error_recovery_command, is_error_recovery_request
 from intelligent_cache import handle_cache_command, is_cache_request
 from email_assistant import handle_email_command, is_email_request
+from entertainment_mode import handle_entertainment_command, is_entertainment_request
+from knowledge_packs import handle_knowledge_pack_command, is_knowledge_pack_request
 
 APPROVE_PATTERN = re.compile(r"^(?:approve|confirm|yes|do it|go ahead|proceed)$", re.IGNORECASE)
 REJECT_PATTERN = re.compile(r"^(?:reject|cancel that|no|never mind|dont do that|don't do that)$", re.IGNORECASE)
@@ -93,9 +97,14 @@ registry.register(is_theme_request, handle_theme_command, "Theme")
 registry.register(is_architect_request, handle_architect_command, "Architect")
 registry.register(is_plugin_request, handle_plugin_command, "Plugin")
 registry.register(is_skill_list_request, lambda q: {"action": "list_skills", "reply": describe_skills()}, "Skills")
+registry.register(is_memory_request, handle_memory_command, "Memory")
+registry.register(is_entertainment_request, handle_entertainment_command, "Entertainment")
+registry.register(is_auto_debug_request, handle_auto_debug_command, "Auto Debug")
+registry.register(is_knowledge_pack_request, handle_knowledge_pack_command, "Knowledge Packs")
 registry.register(is_clipboard_request, handle_clipboard_command, "Clipboard")
 registry.register(is_file_request, handle_file_command, "File")
 registry.register(is_gui_request, handle_gui_command, "GUI")
+registry.register(is_reflector_request, handle_reflector_command, "Reflector")
 registry.register(is_ingest_request, handle_ingest_command, "Ingest")
 registry.register(is_focus_request, handle_focus_command, "Focus")
 registry.register(is_media_request, handle_media_command, "Media")

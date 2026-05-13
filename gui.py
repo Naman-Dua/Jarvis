@@ -9,12 +9,179 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QGraphicsDropShadowEffect, QTextEdit,
     QLineEdit, QPushButton, QSizePolicy, QFrame,
-    QSystemTrayIcon, QMenu, QScrollArea
+    QSystemTrayIcon, QMenu, QScrollArea, QTabWidget,
+    QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QEvent, QPoint, QEasingCurve, QPropertyAnimation
-from PyQt6.QtGui import QPainter, QColor, QFont, QPainterPath, QRadialGradient, QPen, QTextCursor, QIcon, QAction, QPixmap, QBrush, QLinearGradient
+from PyQt6.QtGui import QPainter, QColor, QFont, QPainterPath, QRadialGradient, QPen, QTextCursor, QIcon, QAction, QPixmap, QBrush, QLinearGradient, QShortcut, QKeySequence
 from themes import get_active_theme
 from datetime import datetime
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SETTINGS DIALOG
+# ══════════════════════════════════════════════════════════════════════════════
+from settings import load_settings, save_settings
+from PyQt6.QtWidgets import QDialog, QGridLayout, QCheckBox, QComboBox, QFormLayout, QDialogButtonBox
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Kora Settings")
+        self.setFixedSize(460, 460)
+        self.theme = get_active_theme()
+        self.setStyleSheet(f"""
+            QDialog {{ background: {self.theme.get('main_bg', '#0f1423')}; color: white; }}
+            QLabel {{ color: white; font-family: Outfit; font-size: 14px; }}
+            QCheckBox {{ color: white; font-family: Outfit; }}
+            QComboBox {{ background: #1a2235; color: white; border: 1px solid {self.theme['border']}; border-radius: 5px; padding: 5px; }}
+            QPushButton {{ background: {self.theme['accent']}; color: black; border-radius: 5px; padding: 5px 15px; font-weight: bold; }}
+            QPushButton:hover {{ background: #ffffff; }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        
+        self.settings = load_settings()
+        
+        self.wake_word_cb = QCheckBox("Enable Wake Word")
+        self.wake_word_cb.setChecked(self.settings.get("enable_wake_word", False))
+        
+        self.speak_replies_cb = QCheckBox("Speak Text Replies")
+        self.speak_replies_cb.setChecked(self.settings.get("speak_text_replies", False))
+        
+        self.confirmations_cb = QCheckBox("Require Action Confirmations")
+        self.confirmations_cb.setChecked(self.settings.get("require_action_confirmation", True))
+
+        self.live_eye_cb = QCheckBox("Enable Proactive Live Eye")
+        self.live_eye_cb.setChecked(self.settings.get("enable_live_eye", False))
+
+        self.routing_cb = QCheckBox("Enable Multi-Model Routing")
+        self.routing_cb.setChecked(self.settings.get("enable_model_routing", True))
+        
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["llama3.1:8b", "llama3:latest", "mistral:latest", "phi3:latest"])
+        self.model_combo.setCurrentText(self.settings.get("model_name", "llama3.1:8b"))
+
+        self.fast_model_combo = QComboBox()
+        self.fast_model_combo.addItems(["llama3.1:8b", "llama3:latest", "mistral:latest", "phi3:latest"])
+        self.fast_model_combo.setCurrentText(self.settings.get("fast_model_name", self.settings.get("model_name", "llama3.1:8b")))
+
+        self.deep_model_combo = QComboBox()
+        self.deep_model_combo.addItems(["llama3.1:8b", "llama3:latest", "mistral:latest", "phi3:latest"])
+        self.deep_model_combo.setCurrentText(self.settings.get("deep_model_name", self.settings.get("model_name", "llama3.1:8b")))
+        
+        from themes import THEMES
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(list(THEMES.keys()))
+        from themes import load_setting
+        self.theme_combo.setCurrentText(load_setting("active_theme", "neon"))
+        
+        form.addRow(self.wake_word_cb)
+        form.addRow(self.speak_replies_cb)
+        form.addRow(self.confirmations_cb)
+        form.addRow(self.live_eye_cb)
+        form.addRow(self.routing_cb)
+        form.addRow("Default Model:", self.model_combo)
+        form.addRow("Fast Model:", self.fast_model_combo)
+        form.addRow("Deep Model:", self.deep_model_combo)
+        form.addRow("Theme:", self.theme_combo)
+        
+        layout.addLayout(form)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self.save_and_close)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def save_and_close(self):
+        updates = {
+            "enable_wake_word": self.wake_word_cb.isChecked(),
+            "speak_text_replies": self.speak_replies_cb.isChecked(),
+            "require_action_confirmation": self.confirmations_cb.isChecked(),
+            "enable_live_eye": self.live_eye_cb.isChecked(),
+            "enable_model_routing": self.routing_cb.isChecked(),
+            "model_name": self.model_combo.currentText(),
+            "fast_model_name": self.fast_model_combo.currentText(),
+            "deep_model_name": self.deep_model_combo.currentText(),
+        }
+        save_settings(updates)
+        from storage import save_setting
+        save_setting("active_theme", self.theme_combo.currentText())
+        self.accept()
+
+
+class CommandPalette(QDialog):
+    COMMANDS = [
+        ("Memory Summary", "what do you remember about me"),
+        ("Game Mode On", "game mode on"),
+        ("Pick Entertainment", "pick something fun"),
+        ("Auto Debug", "auto-debug"),
+        ("Auto Debug Mode On", "auto-debug mode on"),
+        ("Knowledge Packs", "list offline knowledge packs"),
+        ("Ingest Knowledge Packs", "ingest all knowledge packs"),
+        ("List Plugins", "list plugins"),
+        ("List Tasks", "show tasks"),
+        ("Analyze Screen", "analyze screen"),
+        ("Morning Briefing", "morning briefing"),
+        ("System Status", "system status"),
+        ("Sleep Mode", "go to sleep"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_dashboard = parent
+        self.setWindowTitle("Command Palette")
+        self.setFixedSize(520, 420)
+        theme = get_active_theme()
+        self.setStyleSheet(f"""
+            QDialog {{ background: #0a0f1e; color: #ffffff; }}
+            QLineEdit {{
+                background: #111a2e;
+                border: 1px solid {theme['border']};
+                border-radius: 10px;
+                padding: 10px 14px;
+                color: #ffffff;
+                font-size: 14px;
+            }}
+            QListWidget {{
+                background: rgba(255, 255, 255, 6);
+                border: 1px solid {theme['border']};
+                border-radius: 12px;
+                color: #dbe7f5;
+                padding: 8px;
+            }}
+            QListWidget::item {{ padding: 10px; border-radius: 8px; }}
+            QListWidget::item:selected {{ background: {theme['accent']}; color: #061018; }}
+        """)
+        layout = QVBoxLayout(self)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Type a command...")
+        self.list_widget = QListWidget()
+        layout.addWidget(self.search)
+        layout.addWidget(self.list_widget)
+        self.search.textChanged.connect(self._populate)
+        self.search.returnPressed.connect(self._submit)
+        self.list_widget.itemDoubleClicked.connect(lambda _: self._submit())
+        self._populate("")
+
+    def _populate(self, query):
+        self.list_widget.clear()
+        q = str(query).lower().strip()
+        for title, command in self.COMMANDS:
+            if not q or q in title.lower() or q in command.lower():
+                item = QListWidgetItem(f"{title}  -  {command}")
+                item.setData(Qt.ItemDataRole.UserRole, command)
+                self.list_widget.addItem(item)
+        if self.list_widget.count():
+            self.list_widget.setCurrentRow(0)
+
+    def _submit(self):
+        item = self.list_widget.currentItem()
+        command = item.data(Qt.ItemDataRole.UserRole) if item else self.search.text().strip()
+        if command and self.parent_dashboard:
+            self.parent_dashboard.text_input_signal.emit(command)
+        self.accept()
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  PREMIUM DYNAMIC BACKGROUND (Nebula)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -23,7 +190,7 @@ class KoraNebulaBackground(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.points = []
-        for _ in range(4): # Reduced from 12
+        for _ in range(3):
             self.points.append({
                 "x": random.random(),
                 "y": random.random(),
@@ -38,7 +205,7 @@ class KoraNebulaBackground(QWidget):
         
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_nebula)
-        self.timer.start(16) # Smooth 60fps background
+        self.timer.start(50)
         
         self.is_processing = False
 
@@ -191,8 +358,8 @@ class SystemHudWidget(QFrame):
         fill.setFixedWidth(0)
         
         anim = QPropertyAnimation(fill, b"minimumWidth")
-        anim.setDuration(800)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setDuration(600)
+        anim.setEasingCurve(QEasingCurve.Type.OutExpo)
         
         l.addWidget(txt)
         l.addWidget(bar_bg)
@@ -254,7 +421,7 @@ class KoraSphereWidget(QWidget):
         self.color_lerp = 1.0
 
         self.particles = []
-        n = 450  # Optimized for performance (reduced from 1800)
+        n = 360
         phi = math.pi * (3.0 - math.sqrt(5.0))
         for i in range(n):
             y = 1 - (i / float(n - 1)) * 2
@@ -264,10 +431,10 @@ class KoraSphereWidget(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
-        self.timer.start(33) # 30 FPS for smoother performance
+        self.timer.start(33)
 
     def _tick(self):
-        self.phase += 0.05
+        self.phase += 0.025
         
         # Smooth mouse movement
         dx = (self.mouse_target.x() - self.mouse_current.x()) * 0.1
@@ -276,20 +443,20 @@ class KoraSphereWidget(QWidget):
 
         # State-based logic
         if self.state == "PROCESSING":
-            speed_y, speed_x = 0.15, 0.08
+            speed_y, speed_x = 0.075, 0.04
             self.vibration = 3.0
-            self.amplitude = 0.3 + abs(math.sin(self.phase * 4)) * 0.4
+            self.amplitude = 0.3 + abs(math.sin(self.phase * 8)) * 0.4
         elif self.state == "SPEAKING":
-            speed_y, speed_x = 0.05, 0.02
+            speed_y, speed_x = 0.025, 0.01
             self.vibration = 1.0
             # Simulate speech amplitude
-            self.amplitude = 0.2 + abs(math.sin(self.phase * 12)) * 0.8
+            self.amplitude = 0.2 + abs(math.sin(self.phase * 24)) * 0.8
         elif self.state == "LISTENING":
-            speed_y, speed_x = 0.02, 0.01
-            self.vibration = 0.5
-            self.amplitude = 0.1 + abs(math.sin(self.phase * 8)) * 0.5
-        else:
             speed_y, speed_x = 0.01, 0.005
+            self.vibration = 0.5
+            self.amplitude = 0.1 + abs(math.sin(self.phase * 16)) * 0.5
+        else:
+            speed_y, speed_x = 0.005, 0.0025
             self.vibration = 0.0
             self.amplitude = 0.0
 
@@ -432,7 +599,7 @@ class ThinkingIndicator(QWidget):
         self.dots = [0.0, 0.0, 0.0]
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._animate)
-        self.timer.start(50)
+        self.timer.start(70)
         self.phase = 0.0
         self.hide()
 
@@ -482,6 +649,8 @@ class KoraDashboard(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(60, 60, 1040, 700) # Slightly larger for shadow
         self._drag_pos = QPoint()
+        self.overlay_mode = False
+        self._normal_geometry = None
         self.theme = get_active_theme()
 
         # Main background frame
@@ -551,7 +720,7 @@ class KoraDashboard(QMainWindow):
             }
             QPushButton:hover { background: rgba(255, 255, 255, 20); color: white; }
         """)
-        self.min_btn.clicked.connect(self.hide)
+        self.min_btn.clicked.connect(self._enter_overlay)
         header_layout.addWidget(self.min_btn)
 
         self.close_btn = QPushButton("✕")
@@ -619,6 +788,34 @@ class KoraDashboard(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(15)
 
+        self.workspace_tabs = QTabWidget()
+        self.workspace_tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {self.theme['border']};
+                border-radius: 20px;
+                background: rgba(6, 8, 14, 120);
+            }}
+            QTabBar::tab {{
+                background: rgba(255,255,255,8);
+                color: #8fa4bd;
+                padding: 9px 14px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                margin-right: 4px;
+                font-weight: 700;
+                font-size: 11px;
+            }}
+            QTabBar::tab:selected {{
+                background: {self.theme['accent']};
+                color: #061018;
+            }}
+        """)
+
+        chat_tab = QWidget()
+        chat_layout = QVBoxLayout(chat_tab)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(8)
+
         # Log View
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
@@ -645,11 +842,18 @@ class KoraDashboard(QMainWindow):
                 background: {self.theme['accent']};
             }}
         """)
-        right_layout.addWidget(self.log_view)
 
         # Thinking Indicator
         self.thinking_indicator = ThinkingIndicator()
-        right_layout.addWidget(self.thinking_indicator, alignment=Qt.AlignmentFlag.AlignLeft)
+        chat_layout.addWidget(self.log_view)
+        chat_layout.addWidget(self.thinking_indicator, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.workspace_tabs.addTab(chat_tab, "Chat")
+
+        self.memory_list = self._create_list_tab("Memory")
+        self.task_list = self._create_list_tab("Tasks")
+        self.plugin_list = self._create_list_tab("Plugins")
+        self.settings_list = self._create_list_tab("Settings")
+        right_layout.addWidget(self.workspace_tabs)
 
         # Input Area
         input_row = QHBoxLayout()
@@ -713,7 +917,9 @@ class KoraDashboard(QMainWindow):
         
         actions = [
             ("📸", "Vision Analysis", "analyze screen"),
-            ("🧹", "Clear Memory", "reset conversation"),
+            ("🧹", "Clear Conversation", "reset conversation"),
+            ("🧠", "Memory Summary", "what do you remember about me"),
+            ("⌘", "Command Palette", "__palette__"),
             ("🌙", "Sleep Mode", "go to sleep"),
             ("⚙️", "Settings", "settings"),
             ("📁", "File Ops", "show my files")
@@ -738,7 +944,12 @@ class KoraDashboard(QMainWindow):
                     border-radius: 10px; 
                 }}
             """)
-            btn.clicked.connect(lambda checked, c=command: self.text_input_signal.emit(c))
+            if command == "settings":
+                btn.clicked.connect(self._open_settings_dialog)
+            elif command == "__palette__":
+                btn.clicked.connect(self._open_command_palette)
+            else:
+                btn.clicked.connect(lambda checked, c=command: self.text_input_signal.emit(c))
             action_layout.addWidget(btn)
         
         action_layout.addStretch()
@@ -751,6 +962,8 @@ class KoraDashboard(QMainWindow):
         root.addWidget(right, stretch=1)
         layout_container.addWidget(content_wrap)
 
+        self._init_overlay()
+
         # Tray & Signals
         self._init_tray()
         self.status_signal.connect(self.update_status)
@@ -758,6 +971,8 @@ class KoraDashboard(QMainWindow):
         self.mood_signal.connect(self.sphere_core.set_mood)
         self.telemetry_signal.connect(self.update_telemetry)
         self.re_enable_input_signal.connect(self._re_enable_input_on_main_thread)
+        self.palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self.palette_shortcut.activated.connect(self._open_command_palette)
 
         # Small Thing: Quick clipboard monitor timer
         self.last_clip = ""
@@ -767,12 +982,203 @@ class KoraDashboard(QMainWindow):
 
         self._load_past_logs()
         self._load_telemetry_snapshot()
+        self._refresh_dashboard_panels()
+        self.panel_refresh_timer = QTimer(self)
+        self.panel_refresh_timer.timeout.connect(self._refresh_dashboard_panels)
+        self.panel_refresh_timer.start(5000)
+
+    def _create_list_tab(self, title):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        refresh = QPushButton("Refresh")
+        refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255,255,255,12);
+                border: 1px solid {self.theme['border']};
+                border-radius: 10px;
+                color: #dbe7f5;
+                padding: 8px 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: {self.theme['accent']}; color: #061018; }}
+        """)
+        listing = QListWidget()
+        listing.setStyleSheet(f"""
+            QListWidget {{
+                background: rgba(4, 8, 16, 165);
+                border: 1px solid {self.theme['border']};
+                border-radius: 14px;
+                color: #dbe7f5;
+                padding: 8px;
+                font-size: 13px;
+            }}
+            QListWidget::item {{ padding: 9px; border-bottom: 1px solid rgba(255,255,255,8); }}
+        """)
+        refresh.clicked.connect(self._refresh_dashboard_panels)
+        layout.addWidget(refresh, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addWidget(listing)
+        self.workspace_tabs.addTab(tab, title)
+        return listing
+
+    def _set_list_items(self, widget, rows):
+        widget.clear()
+        for row in rows:
+            widget.addItem(QListWidgetItem(str(row)))
+
+    def _refresh_dashboard_panels(self):
+        try:
+            from storage import load_all_settings, search_memories
+            memories = search_memories(limit=12)
+            self._set_list_items(
+                self.memory_list,
+                [f"{category}: {content}" for _id, category, content, _ts in memories] or ["No saved memories yet."],
+            )
+        except Exception as e:
+            self._set_list_items(self.memory_list, [f"Memory panel unavailable: {e}"])
+
+        try:
+            from task_memory import load_task_memory
+            tasks = load_task_memory(limit=12)
+            self._set_list_items(
+                self.task_list,
+                [f"{task['status'].upper()} - {task['title']} {task['notes']}".strip() for task in tasks] or ["No tracked tasks yet."],
+            )
+        except Exception as e:
+            self._set_list_items(self.task_list, [f"Task panel unavailable: {e}"])
+
+        try:
+            from plugin_loader import get_loaded_plugins
+            plugins = get_loaded_plugins()
+            rows = [
+                f"{name}: {getattr(mod, 'DESCRIPTION', 'No description')}"
+                for name, mod in sorted(plugins.items())
+            ]
+            self._set_list_items(self.plugin_list, rows or ["No plugins loaded."])
+        except Exception as e:
+            self._set_list_items(self.plugin_list, [f"Plugin panel unavailable: {e}"])
+
+        try:
+            from storage import load_all_settings
+            settings = load_all_settings()
+            rows = [f"{key}: {value}" for key, value in sorted(settings.items())]
+            self._set_list_items(self.settings_list, rows or ["No custom settings saved."])
+        except Exception as e:
+            self._set_list_items(self.settings_list, [f"Settings panel unavailable: {e}"])
+
+    def _open_command_palette(self):
+        palette = CommandPalette(self)
+        palette.exec()
+
+    def _init_overlay(self):
+        self.overlay_frame = QFrame(self)
+        self.overlay_frame.hide()
+        self.overlay_frame.setObjectName("OverlayFrame")
+        self.overlay_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.overlay_frame.setStyleSheet(f"""
+            #OverlayFrame {{
+                background: rgba(8, 12, 22, 235);
+                border: 1px solid {self.theme['border']};
+                border-radius: 22px;
+            }}
+            QLabel {{
+                background: transparent;
+                color: #e8f2ff;
+                font-family: 'Inter', sans-serif;
+            }}
+            QPushButton {{
+                background: rgba(255, 255, 255, 14);
+                border: none;
+                border-radius: 12px;
+                color: #e8f2ff;
+                font-weight: bold;
+                padding: 6px 10px;
+            }}
+            QPushButton:hover {{
+                background: {self.theme['accent']};
+                color: #061018;
+            }}
+        """)
+
+        layout = QHBoxLayout(self.overlay_frame)
+        layout.setContentsMargins(16, 12, 12, 12)
+        layout.setSpacing(12)
+
+        self.overlay_orb = QLabel()
+        self.overlay_orb.setFixedSize(42, 42)
+        orb = QPixmap(42, 42)
+        orb.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(orb)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(self.theme["accent"]))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(4, 4, 34, 34)
+        painter.setBrush(QColor(255, 255, 255, 180))
+        painter.drawEllipse(15, 15, 12, 12)
+        painter.end()
+        self.overlay_orb.setPixmap(orb)
+        layout.addWidget(self.overlay_orb)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        self.overlay_title = QLabel("KORA")
+        self.overlay_title.setFont(QFont("Outfit", 11, QFont.Weight.Bold))
+        self.overlay_title.setStyleSheet(f"color: {self.theme['accent']}; letter-spacing: 2px;")
+        self.overlay_status = QLabel("SYSTEM ONLINE")
+        self.overlay_status.setFont(QFont("Inter", 9))
+        self.overlay_status.setStyleSheet("color: #8fa4bd;")
+        text_col.addWidget(self.overlay_title)
+        text_col.addWidget(self.overlay_status)
+        layout.addLayout(text_col, stretch=1)
+
+        open_btn = QPushButton("Open")
+        open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.clicked.connect(self._exit_overlay)
+        layout.addWidget(open_btn)
+
+    def _enter_overlay(self):
+        if self.overlay_mode:
+            return
+        self.overlay_mode = True
+        self._normal_geometry = self.geometry()
+        self.main_frame.hide()
+        self.overlay_frame.show()
+        self.setFixedSize(286, 92)
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen:
+            self.move(screen.right() - self.width() - 24, screen.bottom() - self.height() - 36)
+        self.setWindowOpacity(0.96)
+        self.overlay_frame.setGeometry(0, 0, self.width(), self.height())
+        self.show()
+        self.raise_()
+
+    def _exit_overlay(self):
+        if not self.overlay_mode:
+            self.showNormal()
+            self.activateWindow()
+            return
+        self.overlay_mode = False
+        self.overlay_frame.hide()
+        self.main_frame.show()
+        self.setWindowOpacity(1.0)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        if self._normal_geometry:
+            self.setGeometry(self._normal_geometry)
+        else:
+            self.setGeometry(60, 60, 1040, 700)
+        self.main_frame.setGeometry(20, 20, self.width() - 40, self.height() - 40)
+        self.nebula.setGeometry(0, 0, self.main_frame.width(), self.main_frame.height())
+        self.showNormal()
+        self.activateWindow()
 
     def _get_mode_text(self):
         modes = {
-            "voice": "🎙 VOICE ACTIVE", 
-            "text": "⌨ TEXT ACTIVE", 
-            "both": "🎙 VOICE + ⌨ TEXT ACTIVE"
+            "voice": "VOICE ACTIVE",
+            "text": "TEXT ACTIVE",
+            "both": "VOICE + TEXT ACTIVE"
         }
         return modes.get(self.input_mode, "SYSTEM ACTIVE")
 
@@ -789,7 +1195,7 @@ class KoraDashboard(QMainWindow):
         self.tray_icon.setIcon(QIcon(pixmap))
         menu = QMenu()
         show_action = QAction("Open Kora", self)
-        show_action.triggered.connect(self.showNormal)
+        show_action.triggered.connect(self._exit_overlay)
         menu.addAction(show_action)
         exit_action = QAction("Shutdown", self)
         exit_action.triggered.connect(self._close_app)
@@ -800,10 +1206,11 @@ class KoraDashboard(QMainWindow):
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if self.isVisible(): self.hide()
+            if self.overlay_mode:
+                self._exit_overlay()
+            elif self.isVisible(): self._enter_overlay()
             else: 
-                self.showNormal()
-                self.activateWindow()
+                self._exit_overlay()
                 self._greet_user()
 
     def _greet_user(self):
@@ -847,6 +1254,8 @@ class KoraDashboard(QMainWindow):
     def update_status(self, text):
         raw = text.upper()
         self.status_label.setText(raw)
+        if hasattr(self, "overlay_status"):
+            self.overlay_status.setText(raw[:28])
         
         # Big Impact: Dynamic Window Title
         self.setWindowTitle(f"KORA | {raw}")
@@ -901,21 +1310,25 @@ class KoraDashboard(QMainWindow):
         safe_display = escape(str(display)).replace("\n", "<br/>")
         
         # Premium Bubble HTML
+        avatar = "👤" if is_user else "💠"
         html = f"""
-        <div style="margin: 14px 0; text-align: {align};">
-            <span style="color: {color}; font-weight: bold; font-size: 10px; margin-bottom: 5px; display: inline-block; letter-spacing: 1.5px; opacity: 0.8;">{safe_sender}</span>
+        <div style="margin: 14px 0; text-align: {align}; font-family: 'Inter', sans-serif;">
+            <div style="color: {color}; font-weight: 700; font-size: 11px; margin-bottom: 6px; letter-spacing: 1px; opacity: 0.9; text-transform: uppercase;">
+                {avatar} {safe_sender}
+            </div>
             <div style="
                 background: {bg_color};
                 border: 1px solid {border_color};
-                border-radius: 20px;
+                border-radius: 18px;
                 border-bottom-{align}-radius: 4px;
-                padding: 14px 20px;
+                padding: 16px 22px;
                 display: inline-block;
-                max-width: 82%;
+                max-width: 85%;
                 text-align: left;
                 color: #f0f4f8;
-                font-size: 14.5px;
+                font-size: 15px;
                 line-height: 1.6;
+                box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.2);
             ">
                 {safe_display}
             </div>
@@ -923,6 +1336,11 @@ class KoraDashboard(QMainWindow):
         """
         self.log_view.append(html)
         self.log_view.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _open_settings_dialog(self):
+        dlg = SettingsDialog(self)
+        if dlg.exec():
+            self.log_signal.emit("SYSTEM", "Settings saved. Restart Kora to fully apply theme and hardware changes.")
 
     def _load_past_logs(self):
         try:
@@ -948,4 +1366,20 @@ class KoraDashboard(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            self.hide()
+            self._enter_overlay()
+
+    def mouseDoubleClickEvent(self, event):
+        if self.overlay_mode and event.button() == Qt.MouseButton.LeftButton:
+            self._exit_overlay()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "overlay_frame") and self.overlay_mode:
+            self.overlay_frame.setGeometry(0, 0, self.width(), self.height())
+        elif hasattr(self, "main_frame"):
+            self.main_frame.setGeometry(20, 20, max(1, self.width() - 40), max(1, self.height() - 40))
+            if hasattr(self, "nebula"):
+                self.nebula.setGeometry(0, 0, self.main_frame.width(), self.main_frame.height())

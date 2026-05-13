@@ -2,10 +2,17 @@ from storage import init_db, load_all_settings, load_setting, save_setting
 
 DEFAULT_SETTINGS = {
     "model_name": "llama3.1:8b",
+    "fast_model_name": "llama3.1:8b",
+    "deep_model_name": "llama3.1:8b",
+    "enable_model_routing": True,
     "enable_wake_word": False,
     "speak_text_replies": False,
+    "enable_live_eye": False,
+    "auto_debug_mode": False,
+    "entertainment_mode": False,
     "require_action_confirmation": True,
     "window_always_on_top": True,
+    "overlay_opacity": 0.94,
 }
 
 

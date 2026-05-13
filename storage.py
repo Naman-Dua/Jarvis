@@ -236,6 +236,88 @@ def load_recent_memories(limit=20):
         return cur.fetchall()
 
 
+def search_memories(keyword="", limit=20):
+    """Return memory rows matching a keyword, newest first."""
+    init_db()
+    keyword = str(keyword or "").strip()
+    with _connect() as conn:
+        cur = conn.cursor()
+        if keyword:
+            cur.execute(
+                """
+                SELECT id, category, content, timestamp
+                FROM memories
+                WHERE content LIKE ? OR category LIKE ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (f"%{keyword}%", f"%{keyword}%", limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, category, content, timestamp
+                FROM memories
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        return cur.fetchall()
+
+
+def delete_memories_matching(keyword, limit=50):
+    """Delete memories matching keyword and return deleted contents."""
+    init_db()
+    init_chroma()
+    keyword = str(keyword or "").strip()
+    if not keyword:
+        return []
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, content
+            FROM memories
+            WHERE content LIKE ? OR category LIKE ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (f"%{keyword}%", f"%{keyword}%", limit),
+        )
+        rows = cur.fetchall()
+        ids = [row[0] for row in rows]
+        if ids:
+            cur.executemany("DELETE FROM memories WHERE id = ?", [(memory_id,) for memory_id in ids])
+            conn.commit()
+
+    if chroma_collection is not None:
+        for _, content in rows:
+            try:
+                chroma_collection.delete(ids=[hashlib.md5(content.encode("utf-8")).hexdigest()])
+            except Exception:
+                pass
+
+    return [row[1] for row in rows]
+
+
+def build_memory_profile(limit=12):
+    """Return a compact profile string suitable for prompt context."""
+    rows = load_recent_memories(limit=limit)
+    if not rows:
+        return ""
+    facts = []
+    seen = set()
+    for category, content, _timestamp in rows:
+        content = " ".join(str(content).split())
+        if not content or content.lower() in seen:
+            continue
+        seen.add(content.lower())
+        facts.append(content)
+    return " | ".join(facts)
+
+
 def save_message(role, content):
     """Append a single message (user or assistant) to the persistent log."""
     init_db()

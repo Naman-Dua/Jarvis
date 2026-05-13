@@ -16,17 +16,29 @@ WINDOWS_POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
 _speak_lock = threading.Lock()
 
 
+_current_process = None
+
 def _escape_powershell_string(text):
     return str(text).replace("'", "''")
 
-
 def _run_powershell(script):
-    subprocess.run(
+    global _current_process
+    _current_process = subprocess.Popen(
         [WINDOWS_POWERSHELL, "-NoProfile", "-Command", script],
-        check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    _current_process.wait()
+    _current_process = None
+
+def stop_speaking():
+    global _current_process
+    if _current_process:
+        try:
+            _current_process.kill()
+        except Exception:
+            pass
+        _current_process = None
 
 
 async def _save_edge_tts(text, output_path):

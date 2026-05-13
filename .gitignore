@@ -31,6 +31,8 @@ MANIFEST
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+*.log
+kora_crash.log
 
 # Unit test / coverage reports
 htmlcov/
@@ -58,7 +60,9 @@ venv.bak/
 
 # SQLite databases (local memory)
 *.sqlite
+*.sqlite3
 *.db
+kora_chroma_db/
 
 # Audio temp files
 temp_audio.wav

@@ -1,6 +1,18 @@
 import os
 import sys
 import ctypes
+import logging
+
+logging.basicConfig(filename='kora_crash.log', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+    print(f"CRITICAL ERROR: {exc_value}")
+
+sys.excepthook = global_exception_handler
 
 # Force Windows DPI Awareness at the hardware level
 try:
@@ -13,6 +25,14 @@ except Exception:
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
+
+# Suppress Hugging Face token and symlink warnings
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+try:
+    import logging
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+except Exception:
+    pass
 
 import threading
 import queue
@@ -178,9 +198,8 @@ def dismiss_all_alerts():
 
 
 def should_speak_response(source):
-    if source == "voice":
-        return True
-    return bool(SPEAK_TEXT_REPLIES)
+    # The user requested that Kora always speaks her answers, even in text mode.
+    return True
 
 
 def push_telemetry(ui, event_name, source=None, value=None):
@@ -209,9 +228,13 @@ def handle_settings_command(query):
         typed = "on" if APP_SETTINGS.get("speak_text_replies") else "off"
         confirm = "on" if APP_SETTINGS.get("require_action_confirmation") else "off"
         model_name = APP_SETTINGS.get("model_name", "llama3.1:8b")
+        routing = "on" if APP_SETTINGS.get("enable_model_routing") else "off"
+        fast_model = APP_SETTINGS.get("fast_model_name", model_name)
+        deep_model = APP_SETTINGS.get("deep_model_name", model_name)
         return (
             "Current settings: "
-            f"wake word {state}, typed reply speech {typed}, confirmations {confirm}, model {model_name}."
+            f"wake word {state}, typed reply speech {typed}, confirmations {confirm}, "
+            f"default model {model_name}, model routing {routing}, fast model {fast_model}, deep model {deep_model}."
         )
 
     if normalized in {"wake word on", "turn wake word on", "enable wake word"}:
@@ -254,6 +277,16 @@ def handle_settings_command(query):
         refresh_runtime_settings()
         return "Live Eye is now inactive."
 
+    if normalized in {"model routing on", "turn model routing on", "enable model routing"}:
+        save_settings({"enable_model_routing": True})
+        refresh_runtime_settings()
+        return "Multi-model routing is on."
+
+    if normalized in {"model routing off", "turn model routing off", "disable model routing"}:
+        save_settings({"enable_model_routing": False})
+        refresh_runtime_settings()
+        return "Multi-model routing is off."
+
     model_match = re.match(r"^(?:set model to|use model)\s+(.+)$", normalized)
     if model_match:
         model_name = model_match.group(1).strip()
@@ -261,6 +294,20 @@ def handle_settings_command(query):
         refresh_runtime_settings()
         brain.model_name = model_name
         return f"Model updated to {model_name}."
+
+    fast_match = re.match(r"^(?:set fast model to|use fast model)\s+(.+)$", normalized)
+    if fast_match:
+        model_name = fast_match.group(1).strip()
+        save_settings({"fast_model_name": model_name})
+        refresh_runtime_settings()
+        return f"Fast model updated to {model_name}."
+
+    deep_match = re.match(r"^(?:set deep model to|use deep model)\s+(.+)$", normalized)
+    if deep_match:
+        model_name = deep_match.group(1).strip()
+        save_settings({"deep_model_name": model_name})
+        refresh_runtime_settings()
+        return f"Deep model updated to {model_name}."
 
     return None
 
@@ -474,6 +521,9 @@ def kora_logic(ui):
         kora_busy.set()
         push_telemetry(ui, "command_received", source=source, value=query[:140])
 
+        # Learn continuously in the background. The extractor filters out transient commands.
+        threading.Thread(target=brain.learn, args=(query,), daemon=True).start()
+
         cmd = query.lower()
 
         try:
@@ -656,11 +706,6 @@ def kora_logic(ui):
                         push_telemetry(ui, "proactive_schedule", source="brain", value=task_str)
                 except Exception as e:
                     print(f"[PROACTIVE] Scheduling failed: {e}")
-
-            # Run fact extraction in background after the reply is ready
-            threading.Thread(
-                target=brain.learn, args=(query,), daemon=True
-            ).start()
 
             ui.mood_signal.emit(mood)
             push_telemetry(ui, "llm_reply", source=source, value=reply_text[:140])
